@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Bot,
   Bell,
@@ -7,7 +7,10 @@ import {
   Zap,
   Save,
   CheckCircle2,
+  AlertCircle,
   RefreshCcw,
+  Loader2,
+  X,
 } from 'lucide-react';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { Button } from '@/components/ui/Button';
@@ -16,6 +19,8 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Switch } from '@/components/ui/Switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { TestNotifyModal } from './TestNotifyModal';
+import { StorageConfigCard } from './components/StorageConfigCard';
+import { CronScheduleCard } from './components/CronScheduleCard';
 
 const PRESET_MODELS = [
   { value: 'deepseek/deepseek-chat', label: 'DeepSeek-V3 (推荐 / 超高性价比)' },
@@ -33,10 +38,15 @@ const ConfigPage: React.FC = () => {
   const [showApiKey, setShowApiKey] = useState(false);
   const [testStatus, setTestStatus] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
-  const [savedToast, setSavedToast] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [toastInfo, setToastInfo] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // 测试弹窗状态
   const [testModal, setTestModal] = useState<{ channel: string; url: string } | null>(null);
+
+  useEffect(() => {
+    config.syncFromBackend();
+  }, []);
 
   const handleTestAi = () => {
     setTesting(true);
@@ -47,50 +57,129 @@ const ConfigPage: React.FC = () => {
     }, 700);
   };
 
-  const handleSave = () => {
-    setSavedToast(true);
-    setTimeout(() => setSavedToast(false), 2000);
+  const handleSave = async () => {
+    setIsSaving(true);
+    setToastInfo(null);
+    try {
+      const res = await config.saveToBackend();
+      if (res.success) {
+        setToastInfo({
+          type: 'success',
+          message: res.message || '配置已成功保存并原子写回 config.yaml 与 .env！',
+        });
+      } else {
+        setToastInfo({
+          type: 'error',
+          message: res.message || '保存配置失败，请检查网络或后端状态',
+        });
+      }
+    } catch (e: any) {
+      setToastInfo({
+        type: 'error',
+        message: `保存失败: ${e?.message || '未知错误'}`,
+      });
+    } finally {
+      setIsSaving(false);
+      setTimeout(() => {
+        setToastInfo(null);
+      }, 4000);
+    }
+  };
+
+  const handleReset = () => {
+    config.resetConfig();
+    setToastInfo({
+      type: 'success',
+      message: '已重置为默认配置值（请点击「保存配置」完成持久化保存）',
+    });
+    setTimeout(() => setToastInfo(null), 3000);
   };
 
   return (
-    <div className="space-y-6">
-      {/* 顶部标题与保存按钮 */}
+    <div className="relative space-y-6">
+      {/* 优雅的右上方悬浮 Toast 提示 */}
+      {toastInfo && (
+        <div
+          className={`fixed right-6 top-20 z-50 flex items-center gap-3 rounded-xl border px-4 py-3 shadow-xl backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-4 ${
+            toastInfo.type === 'success'
+              ? 'border-emerald-200 bg-emerald-50/95 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/90 dark:text-emerald-200'
+              : 'border-red-200 bg-red-50/95 text-red-900 dark:border-red-800 dark:bg-red-950/90 dark:text-red-200'
+          }`}
+        >
+          {toastInfo.type === 'success' ? (
+            <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          ) : (
+            <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0" />
+          )}
+          <div className="text-xs font-medium pr-2">
+            <p className="font-semibold">{toastInfo.type === 'success' ? '保存成功' : '操作提示'}</p>
+            <p className="opacity-90">{toastInfo.message}</p>
+          </div>
+          <button
+            onClick={() => setToastInfo(null)}
+            className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 p-0.5"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* 顶部标题与操作栏 */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
             配置中心
           </h1>
           <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
-            设置 AI 大模型总结能力、推送通知渠道 Webhook 与环境变量
+            设置 AI 大模型、推送通知渠道、定时调度周期与数据生命周期（修改后需点击保存生效）
           </p>
         </div>
 
-        <div className="flex items-center space-x-2">
-          {savedToast && (
-            <span className="flex items-center text-xs text-emerald-500 font-medium animate-pulse">
-              <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
-              配置已自动持久化保存
-            </span>
-          )}
-
+        <div className="flex items-center space-x-2.5">
           <Button
             variant="outline"
             size="sm"
-            onClick={() => config.resetConfig()}
-            className="h-9 gap-1 text-xs text-zinc-500"
+            onClick={handleReset}
+            disabled={isSaving}
+            className="h-9 gap-1 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
           >
             <RefreshCcw className="h-3.5 w-3.5" />
             重置默认
           </Button>
 
-          <Button size="sm" onClick={handleSave} className="h-9 gap-1.5 text-xs font-semibold">
-            <Save className="h-3.5 w-3.5" />
-            保存配置
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={isSaving}
+            className="h-9 gap-1.5 text-xs font-semibold shadow-sm"
+          >
+            {isSaving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}
+            <span>{isSaving ? '正在保存中...' : '保存配置'}</span>
           </Button>
         </div>
       </div>
 
-      {/* 模块一：AI 大模型深度分析配置 */}
+      {/* 模块一：自动拉取与定时调度配置 (Cron) */}
+      <CronScheduleCard
+        cronSchedule={config.cronSchedule}
+        immediateRun={config.immediateRun}
+        onUpdate={config.setRunConfig}
+      />
+
+      {/* 模块二：存储容量与数据生命周期管理 */}
+      <StorageConfigCard
+        autoCleanupEnabled={config.autoCleanupEnabled}
+        maxNewsCapacity={config.maxNewsCapacity}
+        dataRetentionDays={config.dataRetentionDays}
+        onUpdate={config.setStorageConfig}
+        onManualCleanup={config.triggerManualCleanup}
+      />
+
+      {/* 模块三：AI 大模型深度分析配置 */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -203,7 +292,7 @@ const ConfigPage: React.FC = () => {
         )}
       </Card>
 
-      {/* 模块二：推送通知渠道配置 */}
+      {/* 模块四：推送通知渠道配置 */}
       <Card>
         <CardHeader>
           <div className="flex items-center space-x-2.5">

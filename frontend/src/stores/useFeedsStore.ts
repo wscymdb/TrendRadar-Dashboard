@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { PlatformItem, RssFeedItem } from '@/types/feeds';
-import { INITIAL_PLATFORMS, INITIAL_RSS_FEEDS } from '@/mock/initialData';
+import { Api } from '@/api';
 
 interface FeedsStore {
   platforms: PlatformItem[];
@@ -14,31 +14,39 @@ interface FeedsStore {
   updateRssFeed: (id: string, feed: Partial<RssFeedItem>) => void;
   deleteRssFeed: (id: string) => void;
   setGlobalMaxAgeDays: (days: number) => void;
+  syncFromBackend: () => Promise<void>;
+  saveToBackend: () => Promise<boolean>;
 }
 
 export const useFeedsStore = create<FeedsStore>()(
   persist(
-    (set) => ({
-      platforms: INITIAL_PLATFORMS,
-      rssFeeds: INITIAL_RSS_FEEDS,
+    (set, get) => ({
+      platforms: [],
+      rssFeeds: [],
       globalMaxAgeDays: 1,
-      togglePlatform: (id) =>
+      togglePlatform: (id) => {
         set((state) => ({
           platforms: state.platforms.map((p) =>
             p.id === id ? { ...p, enabled: !p.enabled } : p
           ),
-        })),
-      setAllPlatforms: (enabled) =>
+        }));
+        get().saveToBackend();
+      },
+      setAllPlatforms: (enabled) => {
         set((state) => ({
           platforms: state.platforms.map((p) => ({ ...p, enabled })),
-        })),
-      toggleRssFeed: (id) =>
+        }));
+        get().saveToBackend();
+      },
+      toggleRssFeed: (id) => {
         set((state) => ({
           rssFeeds: state.rssFeeds.map((f) =>
             f.id === id ? { ...f, enabled: !f.enabled } : f
           ),
-        })),
-      addRssFeed: (feed) =>
+        }));
+        get().saveToBackend();
+      },
+      addRssFeed: (feed) => {
         set((state) => ({
           rssFeeds: [
             ...state.rssFeeds,
@@ -49,18 +57,42 @@ export const useFeedsStore = create<FeedsStore>()(
               articleCount: 0,
             },
           ],
-        })),
-      updateRssFeed: (id, updated) =>
+        }));
+        get().saveToBackend();
+      },
+      updateRssFeed: (id, updated) => {
         set((state) => ({
           rssFeeds: state.rssFeeds.map((f) =>
             f.id === id ? { ...f, ...updated } : f
           ),
-        })),
-      deleteRssFeed: (id) =>
+        }));
+        get().saveToBackend();
+      },
+      deleteRssFeed: (id) => {
         set((state) => ({
           rssFeeds: state.rssFeeds.filter((f) => f.id !== id),
-        })),
-      setGlobalMaxAgeDays: (days) => set({ globalMaxAgeDays: days }),
+        }));
+        get().saveToBackend();
+      },
+      setGlobalMaxAgeDays: (days) => {
+        set({ globalMaxAgeDays: days });
+        get().saveToBackend();
+      },
+      syncFromBackend: async () => {
+        const res = await Api.getFeeds();
+        if (res.success && res.data) {
+          set({
+            platforms: res.data.platforms || [],
+            rssFeeds: res.data.rssFeeds || [],
+            globalMaxAgeDays: res.data.globalMaxAgeDays || 1,
+          });
+        }
+      },
+      saveToBackend: async () => {
+        const { platforms, rssFeeds, globalMaxAgeDays } = get();
+        const res = await Api.saveFeeds({ platforms, rssFeeds, globalMaxAgeDays });
+        return res.success;
+      },
     }),
     {
       name: 'trendradar_feeds_store',

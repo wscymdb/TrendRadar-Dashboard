@@ -1,9 +1,14 @@
 import { create } from 'zustand';
 import { NewsItem, CrawlLog } from '@/types/news';
-import { MOCK_HOT_NEWS } from '@/mock/initialData';
+import { Api } from '@/api';
 
 interface NewsStore {
   newsList: NewsItem[];
+  totalCurrent: number;
+  totalHistory: number;
+  viewScope: 'current' | 'history';
+  availableDates: string[];
+  selectedDate: string;
   isCrawling: boolean;
   crawlProgress: number;
   logs: CrawlLog[];
@@ -12,74 +17,109 @@ interface NewsStore {
   searchKeyword: string;
   setSelectedPlatform: (platform: string) => void;
   setSearchKeyword: (keyword: string) => void;
-  triggerCrawl: (onLogUpdate?: (log: string) => void) => Promise<void>;
+  setViewScope: (scope: 'current' | 'history') => void;
+  setSelectedDate: (date: string) => void;
+  fetchDates: () => Promise<void>;
+  fetchLatestNews: (scope?: 'current' | 'history', date?: string) => Promise<void>;
+  triggerCrawl: () => Promise<void>;
+  pollLogs: () => Promise<void>;
 }
 
 export const useNewsStore = create<NewsStore>((set, get) => ({
-  newsList: MOCK_HOT_NEWS,
+  newsList: [],
+  totalCurrent: 0,
+  totalHistory: 0,
+  viewScope: 'current',
+  availableDates: [],
+  selectedDate: '',
   isCrawling: false,
   crawlProgress: 0,
   logs: [],
-  lastCrawlTime: '2026-08-26 11:40:19',
+  lastCrawlTime: '尚未抓取',
   selectedPlatform: 'all',
   searchKeyword: '',
-  setSelectedPlatform: (platform) => set({ selectedPlatform: platform }),
-  setSearchKeyword: (keyword) => set({ searchKeyword: keyword }),
-  triggerCrawl: async (onLogUpdate) => {
+  setSelectedPlatform: (platform) => {
+    set({ selectedPlatform: platform });
+  },
+  setSearchKeyword: (keyword) => {
+    set({ searchKeyword: keyword });
+  },
+  setSelectedDate: (date) => {
+    set({ selectedDate: date });
+    get().fetchLatestNews(get().viewScope, date);
+  },
+  setViewScope: (scope) => {
+    set({ viewScope: scope });
+    get().fetchLatestNews(scope, get().selectedDate);
+  },
+  fetchDates: async () => {
+    const res = await Api.getDates();
+    if (res.success && Array.isArray(res.data)) {
+      const dates = res.data;
+      set({
+        availableDates: dates,
+        selectedDate:
+          dates.length > 0
+            ? get().selectedDate && dates.includes(get().selectedDate)
+              ? get().selectedDate
+              : dates[0]
+            : '',
+      });
+    }
+  },
+  fetchLatestNews: async (scope, date) => {
+    const sc = scope !== undefined ? scope : get().viewScope;
+    const d = date !== undefined ? date : get().selectedDate;
+    const res = await Api.getNews(undefined, undefined, sc, d);
+    if (res.success && res.data) {
+      if (Array.isArray(res.data)) {
+        set({ newsList: res.data });
+      } else if (res.data.items) {
+        set({
+          newsList: res.data.items,
+          totalCurrent: res.data.totalCurrent || 0,
+          totalHistory: res.data.totalHistory || 0,
+          selectedDate: res.data.currentDate || get().selectedDate,
+        });
+      }
+    }
+  },
+  pollLogs: async () => {
+    const res = await Api.getCrawlLogs();
+    if (res.success && res.data) {
+      set({
+        logs: res.data.logs || [],
+        isCrawling: res.data.isCrawling,
+        lastCrawlTime: res.data.lastCrawlTime || get().lastCrawlTime,
+      });
+    }
+  },
+  triggerCrawl: async () => {
     if (get().isCrawling) return;
-    set({ isCrawling: true, crawlProgress: 10, logs: [] });
+    set({ isCrawling: true, crawlProgress: 15, logs: [] });
 
-    const addLog = (message: string, type: CrawlLog['type'] = 'info') => {
-      const logItem: CrawlLog = {
-        id: `log_${Date.now()}_${Math.random()}`,
-        timestamp: new Date().toLocaleTimeString(),
-        type,
-        message,
-      };
-      set((state) => ({ logs: [...state.logs, logItem] }));
-      onLogUpdate?.(message);
-    };
+    const res = await Api.triggerCrawl();
 
-    addLog('🚀 触发全网热搜爬取任务 (python -m trendradar)...');
-    await new Promise((r) => setTimeout(r, 600));
+    if (res.success) {
+      const interval = setInterval(async () => {
+        const logRes = await Api.getCrawlLogs();
+        if (logRes.success && logRes.data) {
+          set({
+            logs: logRes.data.logs || [],
+            isCrawling: logRes.data.isCrawling,
+            lastCrawlTime: logRes.data.lastCrawlTime || get().lastCrawlTime,
+          });
 
-    set({ crawlProgress: 30 });
-    addLog('🌐 正在并发连接 11 大热搜平台 (今日头条/微博/知乎/B站/抖音/华尔街见闻)...');
-    await new Promise((r) => setTimeout(r, 700));
-
-    set({ crawlProgress: 60 });
-    addLog('📦 抓取完成：新增 255 条热点，正在执行关键词频率匹配与新鲜度过滤...');
-    await new Promise((r) => setTimeout(r, 600));
-
-    set({ crawlProgress: 85 });
-    addLog('🤖 正在执行 AI 智能提炼与多维度深度分析...', 'success');
-    await new Promise((r) => setTimeout(r, 600));
-
-    set({ crawlProgress: 100 });
-    addLog('✅ 热点报告渲染完成，已生成最新 HTML 报告并推送通知！', 'success');
-
-    const nowStr = new Date().toLocaleString('zh-CN', { hour12: false });
-    set({
-      isCrawling: false,
-      lastCrawlTime: nowStr,
-      newsList: [
-        {
-          id: `new_${Date.now()}`,
-          rank: 1,
-          title: `[刚刚抓取] 全网最新突发热点：AI 与智能体技术迎来新一轮爆发 (${nowStr})`,
-          url: 'https://news.cn',
-          platform: 'toutiao',
-          platformName: '今日头条',
-          heat: '5.2M',
-          isNew: true,
-          matchedKeywords: ['AI', '大模型', '智能体'],
-          firstFoundTime: nowStr.split(' ')[1] || '12:00',
-          lastFoundTime: nowStr.split(' ')[1] || '12:00',
-          duration: '刚刚',
-          occurrenceCount: 1,
-        },
-        ...get().newsList,
-      ],
-    });
+          if (!logRes.data.isCrawling) {
+            clearInterval(interval);
+            set({ crawlProgress: 100 });
+            get().fetchDates();
+            get().fetchLatestNews();
+          }
+        }
+      }, 1000);
+    } else {
+      set({ isCrawling: false });
+    }
   },
 }));

@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { Api } from '@/api';
 
 interface TestNotifyModalProps {
   channelName: string;
@@ -22,13 +23,12 @@ export const TestNotifyModal: React.FC<TestNotifyModalProps> = (props) => {
   const [sending, setSending] = useState(false);
   const [sentSuccess, setSentSuccess] = useState<boolean | null>(null);
 
-  const handleSendTest = () => {
+  const handleSendTest = async () => {
     setSending(true);
     setSentSuccess(null);
-    setTimeout(() => {
-      setSending(false);
-      setSentSuccess(true);
-    }, 800);
+    const res = await Api.testWebhook(channelName, webhookUrl);
+    setSending(false);
+    setSentSuccess(res.success);
   };
 
   return (

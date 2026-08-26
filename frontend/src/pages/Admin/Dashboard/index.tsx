@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Activity,
   Layers,
@@ -20,12 +20,20 @@ import { LogDrawer } from './LogDrawer';
 import { cn } from '@/lib/utils';
 
 const DashboardPage: React.FC = () => {
-  const { newsList, isCrawling, crawlProgress, logs, lastCrawlTime, triggerCrawl } = useNewsStore();
-  const { platforms, rssFeeds } = useFeedsStore();
-  const { keywordGroups } = useKeywordsStore();
-  const { runMode, setRunConfig } = useConfigStore();
+  const { newsList, isCrawling, crawlProgress, logs, lastCrawlTime, triggerCrawl, fetchLatestNews, pollLogs } = useNewsStore();
+  const { platforms, rssFeeds, syncFromBackend: syncFeeds } = useFeedsStore();
+  const { keywordGroups, syncFromBackend: syncKeywords } = useKeywordsStore();
+  const { runMode, setRunConfig, syncFromBackend: syncConfig } = useConfigStore();
 
   const [showLogs, setShowLogs] = useState(false);
+
+  useEffect(() => {
+    fetchLatestNews();
+    syncFeeds();
+    syncKeywords();
+    syncConfig();
+    pollLogs();
+  }, []);
 
   const activePlatformsCount = platforms.filter((p) => p.enabled).length;
   const totalKeywordsCount = Object.values(keywordGroups).flat().length;
@@ -182,7 +190,12 @@ const DashboardPage: React.FC = () => {
       {/* 本轮抓取热点成果速览 */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3">
-          <CardTitle className="text-sm font-semibold">本轮抓取成果速览 (Top 5)</CardTitle>
+          <div className="flex items-center space-x-2">
+            <CardTitle className="text-sm font-semibold">热搜情报成果速览 (Top 5)</CardTitle>
+            <Badge variant="outline" className="text-[10px] font-mono">
+              {newsList.length} 条有效
+            </Badge>
+          </div>
           <a
             href="/"
             className="flex items-center space-x-1 text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
@@ -192,7 +205,13 @@ const DashboardPage: React.FC = () => {
           </a>
         </CardHeader>
         <CardContent className="space-y-2">
-          {newsList.slice(0, 5).map((item, idx) => (
+          {newsList
+            .filter((item) => {
+              const activeIds = new Set(platforms.filter((p) => p.enabled).map((p) => p.id));
+              return activeIds.size === 0 || activeIds.has(item.platform);
+            })
+            .slice(0, 5)
+            .map((item, idx) => (
             <div
               key={item.id}
               className="flex items-center justify-between rounded-lg border border-zinc-100 p-2.5 text-xs transition-colors hover:bg-zinc-50 dark:border-zinc-800/60 dark:hover:bg-zinc-800/40"

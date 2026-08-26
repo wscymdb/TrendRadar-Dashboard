@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Tag, Plus, X, Copy, Check, FileText, Sparkles } from 'lucide-react';
 import { useKeywordsStore } from '@/stores/useKeywordsStore';
 import { Button } from '@/components/ui/Button';
@@ -14,11 +14,16 @@ const KeywordsPage: React.FC = () => {
     addGroup,
     removeGroup,
     getFormattedText,
+    syncFromBackend,
   } = useKeywordsStore();
 
   const [newTagInputs, setNewTagInputs] = useState<Record<string, string>>({});
   const [newGroupName, setNewGroupName] = useState('');
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    syncFromBackend();
+  }, []);
 
   const handleAddTag = (group: string) => {
     const word = newTagInputs[group]?.trim();

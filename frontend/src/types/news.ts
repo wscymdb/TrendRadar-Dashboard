@@ -9,8 +9,10 @@ export interface NewsItem {
   isNew?: boolean;
   category?: string;
   matchedKeywords?: string[];
+  publishTime?: string;
   firstFoundTime?: string;
   lastFoundTime?: string;
+  createdAt?: string;
   duration?: string;
   occurrenceCount?: number;
 }

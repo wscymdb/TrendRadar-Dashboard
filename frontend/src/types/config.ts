@@ -25,4 +25,9 @@ export interface ConfigState {
   cronSchedule: string;
   runMode: 'current' | 'daily' | 'incremental';
   immediateRun: boolean;
+
+  // 存储容量与数据生命周期
+  maxNewsCapacity: number;
+  dataRetentionDays: number;
+  autoCleanupEnabled: boolean;
 }

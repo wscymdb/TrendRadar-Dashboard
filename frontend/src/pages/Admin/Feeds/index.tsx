@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Layers,
@@ -29,9 +29,14 @@ const FeedsPage: React.FC = () => {
     toggleRssFeed,
     deleteRssFeed,
     setGlobalMaxAgeDays,
+    syncFromBackend,
   } = useFeedsStore();
 
   const [showAddModal, setShowAddModal] = useState(false);
+
+  useEffect(() => {
+    syncFromBackend();
+  }, []);
 
   return (
     <div className="space-y-6">
