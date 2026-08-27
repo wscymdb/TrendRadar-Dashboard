@@ -79,3 +79,17 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(161, 161, 170, 0.6);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   🌟 Framer Motion 全局主题丝滑色彩插值流动层
+   ═══════════════════════════════════════════════════════════════ */
+html.theme-transitioning,
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+  transition: background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  transition-delay: 0s !important;
+}

@@ -135,10 +135,10 @@ export const formatFrequencyWordsText = (
 
   const groupBlocks = Object.entries(groups)
     .filter(([_, words]) => words.length > 0)
-    .map(([group, words]) => `# === ${group} ===\n${words.join(' ')}`)
+    .map(([group, words]) => `[${group}]\n${words.join('\n')}`)
     .join('\n\n');
 
-  return output + groupBlocks;
+  return output + groupBlocks + '\n';
 };
 
 interface KeywordsStore {
