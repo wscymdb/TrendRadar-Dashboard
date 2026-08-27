@@ -13,11 +13,31 @@ interface CronScheduleCardProps {
 }
 
 const CRON_PRESETS = [
-  { label: '30分钟一次 (推荐)', value: '*/30 * * * *', desc: '每隔 30 分钟自动调度并抓取一次全网热搜' },
-  { label: '15分钟一次 (高频)', value: '*/15 * * * *', desc: '每隔 15 分钟自动执行一次全网高频抓取' },
-  { label: '1小时一次 (整点)', value: '0 * * * *', desc: '每小时整点自动执行一次全网抓取' },
-  { label: '2小时一次 (轻量)', value: '0 */2 * * *', desc: '每隔 2 小时整点自动执行一次全网抓取' },
-  { label: '每日早中晚3次 (08:00, 12:00, 18:00)', value: '0 8,12,18 * * *', desc: '每天上午 08:00、中午 12:00、傍晚 18:00 各执行一次' },
+  {
+    label: '每 30 分钟 (整点与半点 :00, :30)',
+    value: '*/30 * * * *',
+    desc: '在每个时钟的 00 分与 30 分自动执行抓取与推送（推荐）',
+  },
+  {
+    label: '每 15 分钟 (高频巡检 :00, :15, :30, :45)',
+    value: '*/15 * * * *',
+    desc: '在每个时钟的 00分、15分、30分、45分 高频自动抓取',
+  },
+  {
+    label: '每小时整点 (:00)',
+    value: '0 * * * *',
+    desc: '在每个小时的 00 分准时执行（如 09:00, 10:00, 11:00...）',
+  },
+  {
+    label: '每 2 小时偶数整点 (08:00, 10:00, 12:00, 14:00, 16:00...)',
+    value: '0 */2 * * *',
+    desc: '在每天偶数小时的 00 分准时执行（如 10:00, 12:00, 14:00, 16:00, 18:00...）',
+  },
+  {
+    label: '每日早中晚 3 次 (08:00, 12:00, 18:00)',
+    value: '0 8,12,18 * * *',
+    desc: '每天固定在早报 08:00、午报 12:00、晚报 18:00 各执行一次',
+  },
 ];
 
 /**
@@ -25,23 +45,28 @@ const CRON_PRESETS = [
  */
 const parseCronToChinese = (cron: string): string => {
   const trimmed = cron.trim();
-  if (trimmed === '*/15 * * * *') return '每隔 15 分钟自动执行一次全网抓取';
-  if (trimmed === '*/30 * * * *') return '每隔 30 分钟自动执行一次全网抓取 (系统默认推荐)';
-  if (trimmed === '0 * * * *' || trimmed === '*/60 * * * *') return '每小时整点自动执行一次全网抓取';
-  if (trimmed === '0 */2 * * *') return '每隔 2 小时整点自动执行一次全网抓取';
-  if (trimmed === '0 8,12,18 * * *') return '每天上午 08:00、中午 12:00、傍晚 18:00 各执行一次';
+  if (trimmed === '*/15 * * * *') return '在每个小时的 00分、15分、30分、45分 高频执行';
+  if (trimmed === '*/30 * * * *') return '在每个小时的 00分 与 30分 准时执行 (系统默认推荐)';
+  if (trimmed === '0 * * * *' || trimmed === '*/60 * * * *') return '在每个小时的 00分 整点准时执行';
+  if (trimmed === '0 */2 * * *')
+    return '在每天偶数小时的 00 分准时执行（08:00, 10:00, 12:00, 14:00, 16:00, 18:00...）';
+  if (trimmed === '0 8,12,18 * * *')
+    return '每天固定在早报 08:00、午报 12:00、晚报 18:00 各执行一次';
 
   const parts = trimmed.split(/\s+/);
   if (parts.length === 5) {
     const [min, hour, dom, mon, dow] = parts;
     if (min.startsWith('*/')) {
-      return `每隔 ${min.replace('*/', '')} 分钟自动执行一次`;
+      return `在每个时钟的第 ${min.replace('*/', '')} 分钟倍数点执行`;
     }
     if (hour.startsWith('*/') && min === '0') {
-      return `每隔 ${hour.replace('*/', '')} 小时整点自动执行一次`;
+      return `在每 ${hour.replace('*/', '')} 小时的 00 分整点执行`;
     }
     if (hour.includes(',') && min === '0') {
-      return `每天 ${hour.split(',').join('点、')}点 整自动执行一次`;
+      return `每天固定在 ${hour
+        .split(',')
+        .map((h) => `${h.padStart(2, '0')}:00`)
+        .join('、')} 执行`;
     }
     return `自定义 Cron 规则：[分: ${min}] [时: ${hour}] [日: ${dom}] [月: ${mon}] [周: ${dow}]`;
   }

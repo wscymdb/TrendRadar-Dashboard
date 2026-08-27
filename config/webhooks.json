@@ -1,0 +1,12 @@
+{
+  "dingtalk": [
+    {
+      "id": "dt_test_1",
+      "name": "黑匣子",
+      "url": "https://oapi.dingtalk.com/robot/send?access_token=c4572df32d6ef282b78712773eb59808029163764cbad89e25626cda451dde1b",
+      "enabled": true
+    }
+  ],
+  "feishu": [],
+  "wework": []
+}

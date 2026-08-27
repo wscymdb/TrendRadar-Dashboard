@@ -5,7 +5,7 @@ import ConfigPage from './index';
 const meta: RouteMeta = {
   title: '配置中心',
   path: '/admin/config',
-  order: 2,
+  order: 5,
   icon: Settings,
   hideInMenu: false,
   layout: 'admin',

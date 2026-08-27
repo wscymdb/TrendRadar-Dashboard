@@ -22,13 +22,16 @@ export const TestNotifyModal: React.FC<TestNotifyModalProps> = (props) => {
   const { channelName, webhookUrl, onClose } = props;
   const [sending, setSending] = useState(false);
   const [sentSuccess, setSentSuccess] = useState<boolean | null>(null);
+  const [resultMsg, setResultMsg] = useState<string>('');
 
   const handleSendTest = async () => {
     setSending(true);
     setSentSuccess(null);
+    setResultMsg('');
     const res = await Api.testWebhook(channelName, webhookUrl);
     setSending(false);
     setSentSuccess(res.success);
+    setResultMsg(res.message || (res.success ? '测试消息已成功触发投递！' : '投递失败，请检查网络或 Webhook URL 是否有效。'));
   };
 
   return (
@@ -40,7 +43,7 @@ export const TestNotifyModal: React.FC<TestNotifyModalProps> = (props) => {
             <span>发送测试消息到 {channelName}</span>
           </DialogTitle>
           <DialogDescription className="text-xs">
-            模拟向配置的 Webhook 发送一条标准化 TrendRadar 格式卡片消息。
+            模拟向配置的 Webhook 发送一条包含【热点】关键词的 TrendRadar 测试消息。
           </DialogDescription>
         </DialogHeader>
 
@@ -48,7 +51,7 @@ export const TestNotifyModal: React.FC<TestNotifyModalProps> = (props) => {
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-950 text-xs">
             <div className="text-[11px] text-zinc-400 mb-1">目标 Webhook 地址:</div>
             <div className="font-mono text-zinc-700 dark:text-zinc-300 break-all">
-              {webhookUrl || '（未配置 Webhook 地址，将使用模拟测试）'}
+              {webhookUrl || '（未输入 Webhook 地址，请先在配置框中填入 URL）'}
             </div>
           </div>
 
@@ -69,21 +72,19 @@ export const TestNotifyModal: React.FC<TestNotifyModalProps> = (props) => {
 
           {sentSuccess !== null && (
             <div
-              className={`flex items-center space-x-2 rounded-lg p-2.5 text-xs ${
+              className={`flex items-start space-x-2 rounded-lg p-2.5 text-xs ${
                 sentSuccess
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                  : 'bg-rose-500/10 text-rose-600'
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                  : 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
               }`}
             >
               {sentSuccess ? (
-                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
               ) : (
-                <AlertCircle className="h-4 w-4 shrink-0" />
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
               )}
-              <span>
-                {sentSuccess
-                  ? '✅ 测试消息已成功触发投递！'
-                  : '❌ 投递失败，请检查网络或 Webhook URL 是否有效。'}
+              <span className="leading-relaxed font-medium">
+                {resultMsg}
               </span>
             </div>
           )}

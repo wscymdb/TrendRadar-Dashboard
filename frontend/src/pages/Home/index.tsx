@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNewsStore } from '@/stores/useNewsStore';
 import { useFeedsStore } from '@/stores/useFeedsStore';
 import { HeroHeader } from './components/HeroHeader';
-import { PlatformFilter } from './components/PlatformFilter';
+import { FilterBar, FilterDimension } from './components/FilterBar';
 import { LiveNewsList } from './components/LiveNewsList';
 import { HistoryNewsList } from './components/HistoryNewsList';
 import { EmptyState } from './components/EmptyState';
@@ -23,6 +23,8 @@ const HomePage: React.FC = () => {
   const { platforms, syncFromBackend: syncFeeds } = useFeedsStore();
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [dimension, setDimension] = useState<FilterDimension>('topics'); // 默认对齐原版：关注主题聚合模式
+  const [selectedTopic, setSelectedTopic] = useState<string>('all');
   const [selectedPlatform, setSelectedPlatform] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'cards' | 'history'>('cards');
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -50,25 +52,42 @@ const HomePage: React.FC = () => {
     platforms.filter((p) => p.enabled).map((p) => p.id)
   );
 
-  // 严格联动过滤：排除已禁用平台、单平台筛选、搜索词匹配
+  // 联动过滤逻辑：按主题聚合 or 按平台渠道
   const filteredNews = newsList.filter((item) => {
     if (activePlatformIds.size > 0 && !activePlatformIds.has(item.platform)) {
       return false;
     }
-    // 平台或重点关注过滤
-    const matchPlatform =
-      selectedPlatform === 'all'
-        ? true
-        : selectedPlatform === 'matched'
-        ? Boolean(item.matchedKeywords && item.matchedKeywords.length > 0)
-        : item.platform === selectedPlatform;
+
+    // 1. 维度过滤
+    let matchDimension = true;
+    if (dimension === 'topics') {
+      if (selectedTopic === 'all') {
+        // 主题模式下默认只展示命中了关注关键词的高价值热搜 (对齐静态 HTML current.html)
+        matchDimension = Boolean(item.matchedKeywords && item.matchedKeywords.length > 0);
+      } else {
+        matchDimension = Boolean(
+          item.matchedKeywords && item.matchedKeywords.includes(selectedTopic)
+        );
+      }
+    } else {
+      if (selectedPlatform === 'all') {
+        matchDimension = true;
+      } else if (selectedPlatform === 'matched') {
+        matchDimension = Boolean(item.matchedKeywords && item.matchedKeywords.length > 0);
+      } else {
+        matchDimension = item.platform === selectedPlatform;
+      }
+    }
+
+    // 2. 搜索词匹配
     const matchSearch =
       !searchQuery ||
       item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.matchedKeywords?.some((k) =>
         k.toLowerCase().includes(searchQuery.toLowerCase())
       );
-    return matchPlatform && matchSearch;
+
+    return matchDimension && matchSearch;
   });
 
   const handleCopy = (id: string, text: string) => {
@@ -93,13 +112,17 @@ const HomePage: React.FC = () => {
         onDateChange={setSelectedDate}
       />
 
-      {/* 平台分类过滤标签栏 */}
-      <PlatformFilter
+      {/* 双维度过滤栏 (关注主题聚合 vs 平台渠道全盘) */}
+      <FilterBar
+        dimension={dimension}
+        onDimensionChange={setDimension}
         platforms={platforms}
         newsList={newsList}
+        selectedTopic={selectedTopic}
+        onSelectTopic={setSelectedTopic}
         selectedPlatform={selectedPlatform}
-        searchQuery={searchQuery}
         onSelectPlatform={setSelectedPlatform}
+        searchQuery={searchQuery}
       />
 
       {/* 内容区域：统一采用极简高级 List 列表形式 */}

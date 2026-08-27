@@ -11,6 +11,7 @@ TrendRadar Dashboard 一体化服务 (Web & REST API Server)
 
 import os
 import sys
+import re
 import json
 import time
 import signal
@@ -38,6 +39,28 @@ OUTPUT_DIR = BASE_DIR / "output"
 WEB_DIST_DIR = BASE_DIR / "web" / "dist"
 ENV_FILE = BASE_DIR / "docker" / ".env"
 FALLBACK_ENV_FILE = BASE_DIR / ".env"
+WEBHOOKS_FILE = CONFIG_DIR / "webhooks.json"
+
+
+def load_webhooks_data() -> Dict[str, List[Dict[str, Any]]]:
+    """读取已保存的多 Webhook 列表与群备注名称"""
+    if WEBHOOKS_FILE.exists():
+        try:
+            with open(WEBHOOKS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {"dingtalk": [], "feishu": [], "wework": []}
+    return {"dingtalk": [], "feishu": [], "wework": []}
+
+
+def save_webhooks_data(data: Dict[str, List[Dict[str, Any]]]) -> None:
+    """保存多 Webhook 列表与群备注名称"""
+    try:
+        WEBHOOKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(WEBHOOKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Error] 保存 Webhook 列表失败: {e}")
 
 PORT = int(os.environ.get("WEBSERVER_PORT", "7773"))
 
@@ -210,22 +233,40 @@ def prune_database_records(max_capacity: int = 1000, retention_days: int = 30) -
 
 
 def load_frequency_keywords() -> List[str]:
-    """读取已配置的关键词列表"""
+    """读取已配置的白名单关注关键词列表 (跳过 GLOBAL_FILTER 区域)"""
     kw_file = CONFIG_DIR / "frequency_words.txt"
     words = []
     if kw_file.exists():
         try:
             with open(kw_file, "r", encoding="utf-8") as f:
+                in_global_filter = False
                 for line in f:
                     line = line.strip()
-                    if line and not line.startswith(("#", "[", "!")):
+                    if not line:
+                        continue
+                    if line.startswith("[GLOBAL_FILTER]"):
+                        in_global_filter = True
+                        continue
+                    elif line.startswith("[WORD_GROUPS]"):
+                        in_global_filter = False
+                        continue
+                    # 处于黑名单过滤区直接跳过
+                    if in_global_filter:
+                        continue
+
+                    if not line.startswith(("#", "[", "!", "+", "@")):
                         if "=>" in line:
-                            words.append(line.split("=>")[0].strip().strip("/").split("|")[0])
+                            alias = line.split("=>")[-1].strip()
+                            if alias:
+                                words.append(alias)
                         else:
-                            words.extend(line.split())
+                            for w in line.split():
+                                clean_w = w.strip("/| ")
+                                if clean_w and not clean_w.startswith(("!", "+", "@")):
+                                    words.append(clean_w)
         except Exception:
             pass
-    return [w for w in words if len(w) >= 2]
+    return list(dict.fromkeys([w for w in words if len(w) >= 2]))
 
 
 def get_latest_news_from_db(
@@ -401,8 +442,33 @@ def get_python_executable() -> str:
     return sys.executable
 
 
-def run_crawler_async(mode: str = "current"):
-    """异步执行一次爬虫任务并捕获输出日志"""
+# 抓取历史批次存储文件
+CRAWL_HISTORY_FILE = OUTPUT_DIR / "logs" / "crawl_history.json"
+
+
+def load_crawl_history() -> List[Dict[str, Any]]:
+    """读取历史抓取批次记录"""
+    if CRAWL_HISTORY_FILE.exists():
+        try:
+            with open(CRAWL_HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+
+def save_crawl_history(records: List[Dict[str, Any]]) -> None:
+    """保存历史抓取批次记录 (最多保留 200 批次)"""
+    try:
+        CRAWL_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(CRAWL_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(records[:200], f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Error] 保存抓取历史失败: {e}")
+
+
+def run_crawler_async(mode: str = "current", trigger_type: str = "manual"):
+    """异步执行一次爬虫任务并捕获结构化日志与批次历史"""
     global is_crawling, last_crawl_time
     with crawl_lock:
         if is_crawling:
@@ -411,12 +477,33 @@ def run_crawler_async(mode: str = "current"):
 
     def _worker():
         global is_crawling, last_crawl_time
+        start_time_ts = time.time()
+        start_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         python_bin = get_python_executable()
-        append_log(f"🚀 启动爬虫任务: {python_bin} -m trendradar (模式: {mode})...", "info")
+
+        trigger_label = "⏰ Cron 定时调度" if trigger_type == "cron" else "🚀 启动即刻执行" if trigger_type == "startup" else "🖱️ 手动点击触发"
+        append_log(f"🚀 启动爬虫任务 ({trigger_label}): {python_bin} -m trendradar (模式: {mode})...", "info")
+
+        batch_logs: List[Dict[str, str]] = []
+        batch_logs.append({
+            "timestamp": time.strftime("%H:%M:%S"),
+            "type": "info",
+            "message": f"任务启动 [{trigger_label}]，执行模式: {mode}",
+        })
+
+        success_platforms = []
+        failed_platforms = []
+        total_news_count = 0
+        matched_news_count = 0
+        rss_count = 0
+        notifications = []
+        status = "success"
+
         try:
             env = os.environ.copy()
             env["RUN_MODE"] = mode
             env["PYTHONUNBUFFERED"] = "1"
+            env["DOCKER_CONTAINER"] = "true"  # 开启静默运行，禁止唤起本地图形浏览器
 
             process = subprocess.Popen(
                 [python_bin, "-u", "-m", "trendradar"],
@@ -432,17 +519,59 @@ def run_crawler_async(mode: str = "current"):
                 for line in iter(process.stdout.readline, ""):
                     stripped = line.strip()
                     if stripped:
-                        level = "success" if "✅" in stripped or "完成" in stripped else "warning" if "⚠️" in stripped or "失败" in stripped else "info"
+                        level = "success" if ("✅" in stripped or "完成" in stripped or "成功" in stripped) else "warning" if ("⚠️" in stripped or "跳过" in stripped) else "error" if "❌" in stripped or "失败" in stripped else "info"
                         append_log(stripped, level)
+                        batch_logs.append({
+                            "timestamp": time.strftime("%H:%M:%S"),
+                            "type": level,
+                            "message": stripped,
+                        })
+
+                        # 解析统计元数据
+                        if "获取" in stripped and "成功" in stripped:
+                            p_name = stripped.split("获取")[1].split("成功")[0].strip()
+                            if p_name and p_name not in success_platforms:
+                                success_platforms.append(p_name)
+                        elif "获取" in stripped and "失败" in stripped:
+                            p_name = stripped.split("获取")[1].split("失败")[0].strip()
+                            if p_name and p_name not in failed_platforms:
+                                failed_platforms.append(p_name)
+                        if "个标题" in stripped:
+                            try:
+                                import re
+                                num_match = re.search(r"(\d+)\s*个标题", stripped)
+                                if num_match: total_news_count = int(num_match.group(1))
+                            except Exception: pass
+                        if "条频率词匹配" in stripped:
+                            try:
+                                import re
+                                num_match = re.search(r"(\d+)\s*条频率词匹配", stripped)
+                                if num_match:
+                                    matched_news_count = int(num_match.group(1))
+                            except Exception: pass
+                        elif "条匹配" in stripped and "/" in stripped:
+                            try:
+                                import re
+                                num_match = re.search(r"(\d+)/\d+\s*条匹配", stripped)
+                                if num_match:
+                                    matched_news_count += int(num_match.group(1))
+                            except Exception: pass
+                        if "RSS" in stripped and "获取" in stripped:
+                            rss_count += 1
+                        if "已成功向" in stripped or "发送通知" in stripped:
+                            notifications.append(stripped)
 
             process.wait()
 
-            if process.returncode == 0:
-                now_str = time.strftime("%Y-%m-%d %H:%M:%S")
-                last_crawl_time = now_str
-                append_log(f"🎉 爬虫任务全部执行完成并成功生成报告！({now_str})", "success")
+            end_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            duration = round(time.time() - start_time_ts, 1)
 
-                # 抓取完成后自动执行容量淘汰与过期清理
+            if process.returncode == 0:
+                last_crawl_time = end_time_str
+                append_log(f"🎉 爬虫任务全部执行完成并成功生成报告！耗时: {duration}s", "success")
+                status = "partial_error" if failed_platforms else "success"
+
+                # 自动容量淘汰与过期清理
                 env_vars = parse_env_file()
                 cfg = load_config_yaml()
                 storage_cfg = cfg.get("storage", {})
@@ -453,7 +582,31 @@ def run_crawler_async(mode: str = "current"):
                     if p_res["deletedItems"] > 0 or p_res["deletedFiles"] > 0:
                         append_log(f"🧹 自动容量清理：已淘汰 {p_res['deletedItems']} 条超量记录，清理 {p_res['deletedFiles']} 个过期历史归档", "info")
             else:
+                status = "error"
                 append_log(f"❌ 爬虫任务异常退出，退出码: {process.returncode}", "error")
+
+            # 组装结构化批次记录并持久化
+            session_record = {
+                "id": f"crawl_{int(start_time_ts)}_{trigger_type}",
+                "startTime": start_time_str,
+                "endTime": end_time_str,
+                "durationSeconds": duration,
+                "triggerType": trigger_type,
+                "triggerLabel": trigger_label,
+                "mode": mode,
+                "status": status,
+                "totalNews": total_news_count,
+                "matchedNews": matched_news_count,
+                "successPlatforms": success_platforms,
+                "failedPlatforms": failed_platforms,
+                "rssCount": rss_count,
+                "notifications": notifications,
+                "logCount": len(batch_logs),
+                "logs": batch_logs[-300:],  # 每批次保留最近 300 行终端日志
+            }
+            all_history = load_crawl_history()
+            all_history.insert(0, session_record)
+            save_crawl_history(all_history)
 
         except Exception as e:
             append_log(f"❌ 爬虫执行出现错误: {e}", "error")
@@ -522,7 +675,7 @@ def start_cron_scheduler():
                     if cron_matches(cron_schedule, now):
                         print(f"⏰ [Cron 触发] 命中调度规则 '{cron_schedule}' ({now.strftime('%Y-%m-%d %H:%M')})，开始自动抓取...")
                         append_log(f"⏰ [Cron 自动调度] 命中计划任务规则 ({cron_schedule})，自动开始抓取...", "info")
-                        run_crawler_async(mode=run_mode)
+                        run_crawler_async(mode=run_mode, trigger_type="cron")
             except Exception as e:
                 print(f"[Warn] Cron 调度器异常: {e}")
             time.sleep(10)
@@ -600,6 +753,20 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             })
             return
 
+        elif path == "/api/crawl/history":
+            history_list = load_crawl_history()
+            self._send_json({
+                "code": 0,
+                "message": "success",
+                "data": {
+                    "total": len(history_list),
+                    "isCrawling": is_crawling,
+                    "lastCrawlTime": last_crawl_time,
+                    "records": history_list
+                }
+            })
+            return
+
         elif path == "/api/config":
             env_vars = parse_env_file()
             cfg = load_config_yaml()
@@ -616,6 +783,27 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             retention_days = int(env_vars.get("DATA_RETENTION_DAYS", storage_cfg.get("data_retention_days", 30)))
             auto_cleanup = env_vars.get("AUTO_CLEANUP_ENABLED", str(storage_cfg.get("auto_cleanup_enabled", True))).lower() == "true"
 
+            wh_data = load_webhooks_data()
+            dt_list = wh_data.get("dingtalk", [])
+            fs_list = wh_data.get("feishu", [])
+            ww_list = wh_data.get("wework", [])
+
+            # 如果未保存过结构化数据，则从环境变量/config.yaml回填
+            if not dt_list and (env_vars.get("DINGTALK_WEBHOOK_URL") or notif_cfg.get("dingtalk", {}).get("webhook_url")):
+                raw_u = env_vars.get("DINGTALK_WEBHOOK_URL") or notif_cfg.get("dingtalk", {}).get("webhook_url", "")
+                parts = [p.strip() for p in raw_u.split(";") if p.strip()]
+                dt_list = [{"id": f"dt_{i}", "name": "钉钉群" if len(parts)==1 else f"钉钉群 {i+1}", "url": u, "enabled": True} for i, u in enumerate(parts)]
+
+            if not fs_list and (env_vars.get("FEISHU_WEBHOOK_URL") or notif_cfg.get("feishu", {}).get("webhook_url")):
+                raw_u = env_vars.get("FEISHU_WEBHOOK_URL") or notif_cfg.get("feishu", {}).get("webhook_url", "")
+                parts = [p.strip() for p in raw_u.split(";") if p.strip()]
+                fs_list = [{"id": f"fs_{i}", "name": "飞书群" if len(parts)==1 else f"飞书群 {i+1}", "url": u, "enabled": True} for i, u in enumerate(parts)]
+
+            if not ww_list and (env_vars.get("WEWORK_WEBHOOK_URL") or notif_cfg.get("wework", {}).get("webhook_url")):
+                raw_u = env_vars.get("WEWORK_WEBHOOK_URL") or notif_cfg.get("wework", {}).get("webhook_url", "")
+                parts = [p.strip() for p in raw_u.split(";") if p.strip()]
+                ww_list = [{"id": f"ww_{i}", "name": "企微群" if len(parts)==1 else f"企微群 {i+1}", "url": u, "enabled": True} for i, u in enumerate(parts)]
+
             self._send_json({
                 "code": 0,
                 "message": "success",
@@ -628,6 +816,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "feishuWebhook": env_vars.get("FEISHU_WEBHOOK_URL") or notif_cfg.get("feishu", {}).get("webhook_url", ""),
                     "dingtalkWebhook": env_vars.get("DINGTALK_WEBHOOK_URL") or notif_cfg.get("dingtalk", {}).get("webhook_url", ""),
                     "weworkWebhook": env_vars.get("WEWORK_WEBHOOK_URL") or notif_cfg.get("wework", {}).get("webhook_url", ""),
+                    "feishuWebhooks": fs_list,
+                    "dingtalkWebhooks": dt_list,
+                    "weworkWebhooks": ww_list,
                     "weworkMsgType": env_vars.get("WEWORK_MSG_TYPE") or notif_cfg.get("wework", {}).get("msg_type", "markdown"),
                     "telegramBotToken": env_vars.get("TELEGRAM_BOT_TOKEN") or notif_cfg.get("telegram", {}).get("bot_token", ""),
                     "telegramChatId": env_vars.get("TELEGRAM_CHAT_ID") or notif_cfg.get("telegram", {}).get("chat_id", ""),
@@ -644,6 +835,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/keywords":
             kw_file = CONFIG_DIR / "frequency_words.txt"
             raw_text = ""
+            global_filters: List[str] = []
             groups: Dict[str, List[str]] = {}
 
             if kw_file.exists():
@@ -651,20 +843,46 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     with open(kw_file, "r", encoding="utf-8") as f:
                         raw_text = f.read()
 
-                    current_group = "核心关注"
+                    in_global_filter = False
+                    current_group = "企业与品牌"
+
                     for line in raw_text.splitlines():
                         s = line.strip()
                         if not s:
                             continue
-                        if s.startswith("#") and any(sep in s for sep in ["==", "--", "Version", "可视化", "语法", "用法", "效果", "说明", "不懂"]):
+                        # 过滤纯装饰分割线（包含 Unicode ═ ─ ━ 等）
+                        if re.match(r"^[#\s═─━=\-_~*]+$", s):
                             continue
+                        if s.startswith("#") and any(sep in s for sep in ["Version:", "可视化", "语法", "用法", "效果", "说明", "不懂", "http", "凡是", "文件分为", "使用方法", "在这里写入"]):
+                            continue
+
+                        # 区域判断
+                        if s.startswith("[GLOBAL_FILTER]"):
+                            in_global_filter = True
+                            continue
+                        elif s.startswith("[WORD_GROUPS]"):
+                            in_global_filter = False
+                            continue
+
+                        # 如果处于全局黑名单区域
+                        if in_global_filter:
+                            if not s.startswith("#"):
+                                for w in s.split():
+                                    clean_w = w.strip("/| ")
+                                    if clean_w and clean_w not in global_filters:
+                                        global_filters.append(clean_w)
+                            continue
+
+                        # 处于关注白名单区域
                         if s.startswith("[") and s.endswith("]"):
-                            current_group = s.strip("[]")
-                            if current_group not in groups:
-                                groups[current_group] = []
-                        elif s.startswith("#") and len(s) > 1:
-                            clean_name = s.lstrip("#").strip()
-                            if clean_name and not clean_name.startswith("="):
+                            g_name = s.strip("[]").strip()
+                            if g_name and g_name not in ["WORD_GROUPS", "GLOBAL_FILTER"]:
+                                current_group = g_name
+                                if current_group not in groups:
+                                    groups[current_group] = []
+                        elif s.startswith("#"):
+                            clean_name = re.sub(r"^[#\s═─━=\-_~*]+|[#\s═─━=\-_~*]+$", "", s).strip()
+                            if clean_name and len(clean_name) <= 25 and re.search(r"[\u4e00-\u9fa5a-zA-Z]", clean_name):
                                 current_group = clean_name
                                 if current_group not in groups:
                                     groups[current_group] = []
@@ -684,15 +902,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     print(f"[Error] 解析关键词失败: {e}")
 
             groups = {k: v for k, v in groups.items() if v}
+            if not global_filters:
+                global_filters = ["震惊"]
 
             self._send_json({
                 "code": 0,
                 "message": "success",
                 "data": {
                     "rawText": raw_text,
+                    "globalFilters": global_filters,
                     "groups": groups if groups else {
-                        "AI & 大模型": ["ChatGPT", "DeepSeek", "Claude", "OpenAI", "大模型", "算力"],
-                        "股市 & 财经": ["A股", "上证指数", "降息", "央行", "牛市"],
+                        "企业与品牌": ["DeepSeek", "华为", "英伟达", "比亚迪"],
+                        "科技前沿": ["大模型", "芯片", "算力", "自动驾驶"],
                     }
                 }
             })
@@ -814,7 +1035,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             if is_crawling:
                 self._send_json({"code": 1, "message": "已有抓取任务正在执行中"}, code=400)
                 return
-            run_crawler_async(mode)
+            run_crawler_async(mode=mode, trigger_type="manual")
             self._send_json({"code": 0, "message": "抓取任务已成功在后台启动"})
             return
 
@@ -846,18 +1067,46 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
             # 同步通知渠道
             channels = cfg["notification"]["channels"]
-            if "feishuWebhook" in body_json:
-                env_updates["FEISHU_WEBHOOK_URL"] = body_json["feishuWebhook"]
-                if "feishu" not in channels: channels["feishu"] = {}
-                channels["feishu"]["webhook_url"] = body_json["feishuWebhook"]
-            if "dingtalkWebhook" in body_json:
+            wh_save = load_webhooks_data()
+
+            if "dingtalkWebhooks" in body_json and isinstance(body_json["dingtalkWebhooks"], list):
+                wh_save["dingtalk"] = body_json["dingtalkWebhooks"]
+                valid_urls = [x["url"].strip() for x in body_json["dingtalkWebhooks"] if x.get("enabled", True) and x.get("url", "").strip()]
+                joined_u = ";".join(valid_urls)
+                env_updates["DINGTALK_WEBHOOK_URL"] = joined_u
+                if "dingtalk" not in channels: channels["dingtalk"] = {}
+                channels["dingtalk"]["webhook_url"] = joined_u
+            elif "dingtalkWebhook" in body_json:
                 env_updates["DINGTALK_WEBHOOK_URL"] = body_json["dingtalkWebhook"]
                 if "dingtalk" not in channels: channels["dingtalk"] = {}
                 channels["dingtalk"]["webhook_url"] = body_json["dingtalkWebhook"]
-            if "weworkWebhook" in body_json:
+
+            if "feishuWebhooks" in body_json and isinstance(body_json["feishuWebhooks"], list):
+                wh_save["feishu"] = body_json["feishuWebhooks"]
+                valid_urls = [x["url"].strip() for x in body_json["feishuWebhooks"] if x.get("enabled", True) and x.get("url", "").strip()]
+                joined_u = ";".join(valid_urls)
+                env_updates["FEISHU_WEBHOOK_URL"] = joined_u
+                if "feishu" not in channels: channels["feishu"] = {}
+                channels["feishu"]["webhook_url"] = joined_u
+            elif "feishuWebhook" in body_json:
+                env_updates["FEISHU_WEBHOOK_URL"] = body_json["feishuWebhook"]
+                if "feishu" not in channels: channels["feishu"] = {}
+                channels["feishu"]["webhook_url"] = body_json["feishuWebhook"]
+
+            if "weworkWebhooks" in body_json and isinstance(body_json["weworkWebhooks"], list):
+                wh_save["wework"] = body_json["weworkWebhooks"]
+                valid_urls = [x["url"].strip() for x in body_json["weworkWebhooks"] if x.get("enabled", True) and x.get("url", "").strip()]
+                joined_u = ";".join(valid_urls)
+                env_updates["WEWORK_WEBHOOK_URL"] = joined_u
+                if "wework" not in channels: channels["wework"] = {}
+                channels["wework"]["webhook_url"] = joined_u
+            elif "weworkWebhook" in body_json:
                 env_updates["WEWORK_WEBHOOK_URL"] = body_json["weworkWebhook"]
                 if "wework" not in channels: channels["wework"] = {}
                 channels["wework"]["webhook_url"] = body_json["weworkWebhook"]
+
+            save_webhooks_data(wh_save)
+
             if "weworkMsgType" in body_json:
                 env_updates["WEWORK_MSG_TYPE"] = body_json["weworkMsgType"]
                 if "wework" not in channels: channels["wework"] = {}
@@ -993,6 +1242,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"code": 0, "message": "关键词规则已保存！"})
             return
 
+        elif path == "/api/keywords/reset":
+            kw_file = CONFIG_DIR / "frequency_words.txt"
+            default_file = CONFIG_DIR / "frequency_words.default.txt"
+            if default_file.exists():
+                shutil.copy(default_file, kw_file)
+            self._send_json({"code": 0, "message": "已成功恢复为官方默认关键词词库！"})
+            return
+
         elif path == "/api/test/ai":
             time.sleep(0.3)
             self._send_json({"code": 0, "message": "AI 模型握手连通成功！耗时 210ms"})
@@ -1001,25 +1258,85 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/test/webhook":
             url = body_json.get("url", "").strip()
             channel = body_json.get("channel", "未知渠道")
-            if url and url.startswith("http"):
-                try:
-                    test_payload = {
-                        "msg_type": "text",
-                        "content": {"text": "📢 TrendRadar 测试消息：推送通道连通性测试正常！"}
+            if not url or not url.startswith("http"):
+                self._send_json({"code": 1, "message": "Webhook URL 格式不正确，请以 http:// 或 https:// 开头"}, code=400)
+                return
+
+            now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+            # 适配不同平台的 Webhook payload 规范（内容均包含 热点、TrendRadar、雷达 等常见关键字以命中安全校验）
+            if "dingtalk" in url.lower() or "钉钉" in channel:
+                test_payload = {
+                    "msgtype": "text",
+                    "text": {
+                        "content": f"📢 【TrendRadar 全网热点雷达】\n\n🎉 钉钉群机器人通道连通性测试成功！\n⏰ 测试时间: {now_str}\n\n（当检测到热点更新时，系统将自动向本群推送最新榜单报告）"
                     }
-                    req = urllib.request.Request(
-                        url,
-                        data=json.dumps(test_payload).encode("utf-8"),
-                        headers={"Content-Type": "application/json"},
-                        method="POST"
-                    )
-                    with urllib.request.urlopen(req, timeout=5) as resp:
+                }
+            elif "qyapi.weixin.qq.com" in url.lower() or "微信" in channel:
+                test_payload = {
+                    "msgtype": "text",
+                    "text": {
+                        "content": f"📢 【TrendRadar 全网热点雷达】\n\n🎉 企业微信群机器人通道连通性测试成功！\n⏰ 测试时间: {now_str}"
+                    }
+                }
+            else:
+                # 飞书格式
+                test_payload = {
+                    "msg_type": "text",
+                    "content": {
+                        "text": f"📢 【TrendRadar 全网热点雷达】\n\n🎉 飞书群机器人通道连通性测试成功！\n⏰ 测试时间: {now_str}"
+                    }
+                }
+
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(test_payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json", "User-Agent": "TrendRadar/1.0"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    resp_body = resp.read().decode("utf-8")
+                    try:
+                        resp_json = json.loads(resp_body)
+                        # 钉钉返回 errcode != 0
+                        if "errcode" in resp_json and resp_json["errcode"] != 0:
+                            err_msg = resp_json.get("errmsg", "未知错误")
+                            if "keywords not in content" in err_msg:
+                                err_msg = "机器人安全设置包含了关键词校验，请在机器人设置中添加关键词【热点】或【TrendRadar】"
+                            elif "sign not match" in err_msg:
+                                err_msg = "机器人开启了加签验证，当前 Webhook 需去掉加签或采用关键词校验"
+                            elif "token is not exist" in err_msg:
+                                err_msg = "access_token 不存在或已失效，请重新复制 Webhook 地址"
+                            self._send_json({"code": 1, "message": f"钉钉拒绝发送: {err_msg}"}, code=400)
+                            return
+                        # 飞书返回 code != 0 / StatusCode != 0
+                        if ("code" in resp_json and resp_json["code"] != 0) or ("StatusCode" in resp_json and resp_json["StatusCode"] != 0):
+                            self._send_json({"code": 1, "message": f"飞书返回错误: {resp_json.get('msg', '发送失败')}"}, code=400)
+                            return
+                    except Exception:
                         pass
-                except Exception as e:
-                    print(f"[Warn] 测试推送网络返回: {e}")
-            self._send_json({"code": 0, "message": f"测试卡片已成功向 {channel} 发送！"})
+                self._send_json({"code": 0, "message": f"🎉 测试消息已成功发送至 {channel}，请在群聊中查看！"})
+            except urllib.error.HTTPError as e:
+                err_text = e.read().decode("utf-8", errors="ignore")
+                self._send_json({"code": 1, "message": f"Webhook 请求失败 (HTTP {e.code}): {err_text}"}, code=400)
+            except Exception as e:
+                self._send_json({"code": 1, "message": f"Webhook 网络请求异常: {str(e)}"}, code=400)
             return
 
+        elif path in ["/api/crawl/history/clear", "/api/crawl/history"]:
+            save_crawl_history([])
+            self._send_json({"code": 0, "message": "历史抓取日志已成功全部清空！"})
+            return
+
+        self._send_json({"code": 404, "message": "Endpoint not found"}, code=404)
+
+    def do_DELETE(self):
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path
+        if path == "/api/crawl/history":
+            save_crawl_history([])
+            self._send_json({"code": 0, "message": "历史抓取日志已成功全部清空！"})
+            return
         self._send_json({"code": 404, "message": "Endpoint not found"}, code=404)
 
     def _serve_static_file(self, file_path: Path):

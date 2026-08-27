@@ -11,7 +11,7 @@ platforms:
   - id: toutiao
     name: 今日头条
     expected_domain: toutiao.com
-    enabled: false
+    enabled: true
   - id: baidu
     name: 百度热搜
     expected_domain: baidu.com
@@ -115,7 +115,7 @@ notification:
     feishu:
       webhook_url: ''
     dingtalk:
-      webhook_url: ''
+      webhook_url: https://oapi.dingtalk.com/robot/send?access_token=c4572df32d6ef282b78712773eb59808029163764cbad89e25626cda451dde1b
     wework:
       webhook_url: ''
       msg_type: markdown

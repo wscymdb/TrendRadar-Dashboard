@@ -1,189 +1,275 @@
 import React, { useState, useEffect } from 'react';
-import { Tag, Plus, X, Copy, Check, FileText, Sparkles } from 'lucide-react';
+import {
+  Tag,
+  Save,
+  FileCode,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  X,
+  Layers,
+  RotateCcw,
+  ShieldAlert,
+} from 'lucide-react';
 import { useKeywordsStore } from '@/stores/useKeywordsStore';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
-import { Badge } from '@/components/ui/Badge';
+import { Card } from '@/components/ui/Card';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { GroupSidebar } from './components/GroupSidebar';
+import { GroupDetail } from './components/GroupDetail';
+import { GlobalFilterManager } from './components/GlobalFilterManager';
+import { RawTextEditor } from './components/RawTextEditor';
 
 const KeywordsPage: React.FC = () => {
   const {
+    globalFilters,
     keywordGroups,
-    addKeyword,
+    rawText,
+    addGlobalFilters,
+    removeGlobalFilter,
+    clearGlobalFilters,
+    addKeywords,
     removeKeyword,
     addGroup,
+    renameGroup,
     removeGroup,
-    getFormattedText,
+    clearGroup,
+    setRawText,
     syncFromBackend,
+    saveToBackend,
+    resetToDefault,
   } = useKeywordsStore();
 
-  const [newTagInputs, setNewTagInputs] = useState<Record<string, string>>({});
-  const [newGroupName, setNewGroupName] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState<'visual' | 'filter' | 'code'>('visual');
+  const [activeGroup, setActiveGroup] = useState<string>('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [toastInfo, setToastInfo] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
     syncFromBackend();
   }, []);
 
-  const handleAddTag = (group: string) => {
-    const word = newTagInputs[group]?.trim();
-    if (!word) return;
-    addKeyword(group, word);
-    setNewTagInputs({ ...newTagInputs, [group]: '' });
+  // 默认选中第一个分类
+  useEffect(() => {
+    const keys = Object.keys(keywordGroups);
+    if (keys.length > 0) {
+      if (!activeGroup || !keywordGroups[activeGroup]) {
+        setActiveGroup(keys[0]);
+      }
+    } else {
+      setActiveGroup('');
+    }
+  }, [keywordGroups]);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setToastInfo(null);
+    try {
+      const res = await saveToBackend();
+      if (res.success) {
+        setToastInfo({
+          type: 'success',
+          message: res.message || '关键词与黑名单规则已成功持久化写入 frequency_words.txt！',
+        });
+      } else {
+        setToastInfo({
+          type: 'error',
+          message: res.message || '保存失败，请检查网络或后端状态',
+        });
+      }
+    } catch (e: any) {
+      setToastInfo({
+        type: 'error',
+        message: `保存失败: ${e?.message || '未知错误'}`,
+      });
+    } finally {
+      setIsSaving(false);
+      setTimeout(() => setToastInfo(null), 4000);
+    }
   };
 
-  const handleAddGroup = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newGroupName.trim()) return;
-    addGroup(newGroupName.trim());
-    setNewGroupName('');
+  const handleReset = async () => {
+    setIsResetting(true);
+    setToastInfo(null);
+    try {
+      const res = await resetToDefault();
+      if (res.success) {
+        setToastInfo({
+          type: 'success',
+          message: res.message || '已成功恢复为官方默认关键词词库！',
+        });
+      } else {
+        setToastInfo({
+          type: 'error',
+          message: res.message || '重置失败，请检查网络或后端状态',
+        });
+      }
+    } catch (e: any) {
+      setToastInfo({
+        type: 'error',
+        message: `重置失败: ${e?.message || '未知错误'}`,
+      });
+    } finally {
+      setIsResetting(false);
+      setTimeout(() => setToastInfo(null), 4000);
+    }
   };
 
-  const handleCopyFormatted = () => {
-    navigator.clipboard.writeText(getFormattedText());
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleAddGroupAndSelect = (name: string) => {
+    addGroup(name);
+    setActiveGroup(name);
   };
 
   return (
-    <div className="space-y-6">
-      {/* 顶部标题与导出操作 */}
+    <div className="relative space-y-6">
+      {/* 悬浮 Toast 反馈 */}
+      {toastInfo && (
+        <div
+          className={`fixed right-6 top-20 z-50 flex items-center gap-3 rounded-xl border px-4 py-3 shadow-xl backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-4 ${
+            toastInfo.type === 'success'
+              ? 'border-emerald-200 bg-emerald-50/95 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/90 dark:text-emerald-200'
+              : 'border-red-200 bg-red-50/95 text-red-900 dark:border-red-800 dark:bg-red-950/90 dark:text-red-200'
+          }`}
+        >
+          {toastInfo.type === 'success' ? (
+            <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          ) : (
+            <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0" />
+          )}
+          <div className="text-xs font-medium pr-2">
+            <p className="font-semibold">{toastInfo.type === 'success' ? '操作成功' : '操作提示'}</p>
+            <p className="opacity-90">{toastInfo.message}</p>
+          </div>
+          <button
+            onClick={() => setToastInfo(null)}
+            className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 p-0.5"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* 顶部标题与多模式切换栏 */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            关键词分类与过滤规则
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 flex items-center gap-2.5">
+            <Tag className="h-6 w-6 text-zinc-800 dark:text-zinc-200" />
+            <span>关键词分类与关注词库</span>
           </h1>
           <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
-            管理用于全网热搜频次加权、情报命中与预警通知的核心词库
+            精准过滤全网热搜噪音，命中的词汇将优先打上高光标签并在群机器人中精准推送
           </p>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* 模式切换 Tabs */}
+          <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as any)}>
+            <TabsList className="h-9">
+              <TabsTrigger value="visual" className="text-xs px-3 gap-1.5 font-medium">
+                <Layers className="h-3.5 w-3.5" />
+                <span>关注词库</span>
+              </TabsTrigger>
+              <TabsTrigger value="filter" className="text-xs px-3 gap-1.5 font-medium text-rose-600 dark:text-rose-400">
+                <ShieldAlert className="h-3.5 w-3.5" />
+                <span>全局黑名单 ({globalFilters.length})</span>
+              </TabsTrigger>
+              <TabsTrigger value="code" className="text-xs px-3 gap-1.5 font-medium">
+                <FileCode className="h-3.5 w-3.5" />
+                <span>源码编辑</span>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           <Button
             variant="outline"
             size="sm"
-            onClick={handleCopyFormatted}
-            className="h-9 gap-1.5 text-xs border-zinc-200 dark:border-zinc-800"
+            onClick={() => setShowResetConfirm(true)}
+            disabled={isResetting || isSaving}
+            className="h-9 gap-1.5 text-xs text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
           >
-            {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-            <span>{copied ? '已复制 frequency_words.txt' : '复制词库文本'}</span>
+            {isResetting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5" />
+            )}
+            <span>重置默认</span>
+          </Button>
+
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={isSaving || isResetting}
+            className="h-9 gap-1.5 text-xs font-semibold shadow-sm"
+          >
+            {isSaving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}
+            <span>{isSaving ? '正在保存中...' : '保存词库'}</span>
           </Button>
         </div>
       </div>
 
-      {/* 新增分类表单 */}
-      <Card>
-        <CardContent className="p-4">
-          <form onSubmit={handleAddGroup} className="flex gap-2">
-            <Input
-              value={newGroupName}
-              onChange={(e) => setNewGroupName(e.target.value)}
-              placeholder="新增关键词分类主题（如：量子计算、低空经济、出海电商）..."
-              className="text-xs"
+      {/* 主工作台区域 */}
+      {viewMode === 'visual' ? (
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-5 min-h-[520px] items-start">
+          {/* 左侧：分类导航侧栏 (4 cols) */}
+          <Card className="md:col-span-4 lg:col-span-3 p-4 shadow-sm min-h-[520px] flex flex-col">
+            <GroupSidebar
+              groups={keywordGroups}
+              activeGroup={activeGroup}
+              onSelectGroup={(g) => setActiveGroup(g)}
+              onAddGroup={handleAddGroupAndSelect}
+              onRenameGroup={renameGroup}
+              onRemoveGroup={removeGroup}
             />
-            <Button type="submit" size="sm" className="shrink-0 gap-1 text-xs">
-              <Plus className="h-3.5 w-3.5" />
-              <span>创建新分类</span>
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      {/* 各分类标签组墙 */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {Object.entries(keywordGroups).map(([group, words]) => (
-          <Card key={group} className="flex flex-col justify-between">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Tag className="h-4 w-4 text-zinc-500" />
-                  <CardTitle className="text-sm font-semibold">{group}</CardTitle>
-                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                    {words.length} 个词条
-                  </Badge>
-                </div>
-
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => removeGroup(group)}
-                  className="h-6 text-[11px] text-zinc-400 hover:text-rose-500"
-                >
-                  删除分类
-                </Button>
-              </div>
-            </CardHeader>
-
-            <CardContent className="space-y-3 pt-0">
-              {/* Tag 标签流 */}
-              <div className="flex flex-wrap gap-1.5 min-h-[60px] content-start">
-                {words.map((word) => (
-                  <span
-                    key={word}
-                    className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-xs font-mono text-zinc-800 transition-colors hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200"
-                  >
-                    <span>{word}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeKeyword(group, word)}
-                      className="rounded p-0.5 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-
-              {/* 输入框快速回车添加 */}
-              <div className="flex items-center space-x-2 pt-2 border-t border-zinc-100 dark:border-zinc-800/60">
-                <Input
-                  value={newTagInputs[group] || ''}
-                  onChange={(e) =>
-                    setNewTagInputs({ ...newTagInputs, [group]: e.target.value })
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddTag(group);
-                    }
-                  }}
-                  placeholder="输入新词条并按回车..."
-                  className="h-8 text-xs font-mono"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleAddTag(group)}
-                  className="h-8 shrink-0 text-xs"
-                >
-                  添加
-                </Button>
-              </div>
-            </CardContent>
           </Card>
-        ))}
-      </div>
 
-      {/* 词库文本预览区 */}
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center space-x-2">
-            <FileText className="h-4 w-4 text-zinc-500" />
-            <CardTitle className="text-sm font-semibold">
-              frequency_words.txt 规则文件实时映射
-            </CardTitle>
-          </div>
-          <CardDescription className="text-xs">
-            系统后端 `trendradar` 在抓取时将直接根据该格式进行关键词加权计算
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <pre className="rounded-lg border border-zinc-200 bg-zinc-950 p-4 font-mono text-xs text-zinc-300 overflow-x-auto dark:border-zinc-800">
-            {getFormattedText()}
-          </pre>
-        </CardContent>
-      </Card>
+          {/* 右侧：当前分类词条详情与批量录入 (8 cols) */}
+          <Card className="md:col-span-8 lg:col-span-9 p-5 shadow-sm min-h-[520px] flex flex-col overflow-hidden">
+            <GroupDetail
+              groupName={activeGroup}
+              keywords={keywordGroups[activeGroup] || []}
+              onAddKeywords={addKeywords}
+              onRemoveKeyword={removeKeyword}
+              onClearGroup={clearGroup}
+            />
+          </Card>
+        </div>
+      ) : viewMode === 'filter' ? (
+        /* 全局黑名单管理卡片 */
+        <Card className="p-6 shadow-sm">
+          <GlobalFilterManager
+            filters={globalFilters}
+            onAddFilters={addGlobalFilters}
+            onRemoveFilter={removeGlobalFilter}
+            onClearFilters={clearGlobalFilters}
+          />
+        </Card>
+      ) : (
+        /* 源码直接编辑模式 */
+        <Card className="p-5 shadow-sm">
+          <RawTextEditor
+            initialText={rawText}
+            onChangeText={(txt) => setRawText(txt)}
+          />
+        </Card>
+      )}
+
+      {/* 条件挂载：重置为默认词库确认弹窗 */}
+      <ConfirmDialog
+        open={showResetConfirm}
+        title="确认重置为官方默认词库？"
+        description="此操作将把关键词规则恢复为系统初始自带的 frequency_words.txt 标准模板，您当前自定义添加的分类和修改将被覆盖并重新加载。"
+        confirmText="确认重置"
+        variant="warning"
+        onConfirm={handleReset}
+        onClose={() => setShowResetConfirm(false)}
+      />
     </div>
   );
 };

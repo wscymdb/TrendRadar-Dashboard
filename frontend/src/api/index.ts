@@ -53,6 +53,11 @@ export const Api = {
       body: JSON.stringify({ mode }),
     }),
   getCrawlLogs: () => fetchApi('/api/crawl/logs'),
+  getCrawlHistory: () => fetchApi('/api/crawl/history'),
+  clearCrawlHistory: () =>
+    fetchApi('/api/crawl/history', {
+      method: 'DELETE',
+    }),
 
   // 6. 系统配置与维护
   getConfig: () => fetchApi('/api/config'),
@@ -80,6 +85,10 @@ export const Api = {
     fetchApi('/api/keywords', {
       method: 'POST',
       body: JSON.stringify({ formattedText }),
+    }),
+  resetKeywords: () =>
+    fetchApi('/api/keywords/reset', {
+      method: 'POST',
     }),
 
   // 5. 真实热搜新闻 (支持实时 scope=current 与历史全量 scope=history，以及按日期查询 date)
