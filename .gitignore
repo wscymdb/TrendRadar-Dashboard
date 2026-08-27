@@ -3,6 +3,7 @@
 docker/.env
 .env.local
 .env.*.local
+config/webhooks.json
 
 # Build & Dist Outputs
 output/

@@ -1,0 +1,22 @@
+services:
+  trendradar:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dashboard
+    image: trendradar-dashboard:latest
+    container_name: trendradar-dashboard
+    restart: unless-stopped
+
+    # 宿主机外部固定访问 7773 端口 ──► 映射到容器内部 8080 端口
+    ports:
+      - "7773:8080"
+
+    # 持久化挂载配置与数据库产物 (支持在线修改配置写回)
+    volumes:
+      - ../config:/app/config
+      - ../output:/app/output
+
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+      - WEBSERVER_PORT=8080

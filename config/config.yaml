@@ -115,7 +115,7 @@ notification:
     feishu:
       webhook_url: ''
     dingtalk:
-      webhook_url: https://oapi.dingtalk.com/robot/send?access_token=c4572df32d6ef282b78712773eb59808029163764cbad89e25626cda451dde1b
+      webhook_url: ''
     wework:
       webhook_url: ''
       msg_type: markdown
