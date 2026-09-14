@@ -446,6 +446,31 @@ def get_python_executable() -> str:
 CRAWL_HISTORY_FILE = OUTPUT_DIR / "logs" / "crawl_history.json"
 
 
+def get_max_log_history_capacity() -> int:
+    """获取当前配置的任务执行日志最大保留批次数 (默认 200)"""
+    env_vars = parse_env_file()
+    cfg = load_config_yaml()
+    storage_cfg = cfg.get("storage", {})
+    val = env_vars.get("MAX_LOG_HISTORY_CAPACITY", storage_cfg.get("max_log_history_capacity", 200))
+    try:
+        return max(10, int(val))
+    except Exception:
+        return 200
+
+
+def prune_crawl_history(max_capacity: Optional[int] = None) -> int:
+    """修剪历史抓取记录至指定或配置的最大容量，返回淘汰条数"""
+    if max_capacity is None:
+        max_capacity = get_max_log_history_capacity()
+    records = load_crawl_history()
+    if len(records) > max_capacity:
+        trimmed = records[:max_capacity]
+        deleted_count = len(records) - len(trimmed)
+        save_crawl_history(trimmed, max_capacity=max_capacity)
+        return deleted_count
+    return 0
+
+
 def load_crawl_history() -> List[Dict[str, Any]]:
     """读取历史抓取批次记录"""
     if CRAWL_HISTORY_FILE.exists():
@@ -457,12 +482,14 @@ def load_crawl_history() -> List[Dict[str, Any]]:
     return []
 
 
-def save_crawl_history(records: List[Dict[str, Any]]) -> None:
-    """保存历史抓取批次记录 (最多保留 200 批次)"""
+def save_crawl_history(records: List[Dict[str, Any]], max_capacity: Optional[int] = None) -> None:
+    """保存历史抓取批次记录 (支持动态容量上限截断)"""
+    if max_capacity is None:
+        max_capacity = get_max_log_history_capacity()
     try:
         CRAWL_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(CRAWL_HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(records[:200], f, ensure_ascii=False, indent=2)
+            json.dump(records[:max_capacity], f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[Error] 保存抓取历史失败: {e}")
 
@@ -760,6 +787,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 "message": "success",
                 "data": {
                     "total": len(history_list),
+                    "maxCapacity": get_max_log_history_capacity(),
                     "isCrawling": is_crawling,
                     "lastCrawlTime": last_crawl_time,
                     "records": history_list
@@ -782,6 +810,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             max_capacity = int(env_vars.get("MAX_NEWS_CAPACITY", storage_cfg.get("max_news_capacity", 1000)))
             retention_days = int(env_vars.get("DATA_RETENTION_DAYS", storage_cfg.get("data_retention_days", 30)))
             auto_cleanup = env_vars.get("AUTO_CLEANUP_ENABLED", str(storage_cfg.get("auto_cleanup_enabled", True))).lower() == "true"
+            max_log_capacity = int(env_vars.get("MAX_LOG_HISTORY_CAPACITY", storage_cfg.get("max_log_history_capacity", 200)))
 
             wh_data = load_webhooks_data()
             dt_list = wh_data.get("dingtalk", [])
@@ -828,6 +857,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "maxNewsCapacity": max_capacity,
                     "dataRetentionDays": retention_days,
                     "autoCleanupEnabled": auto_cleanup,
+                    "maxLogHistoryCapacity": max_log_capacity,
                 }
             })
             return
@@ -1140,18 +1170,23 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 auto_cl = bool(body_json["autoCleanupEnabled"])
                 env_updates["AUTO_CLEANUP_ENABLED"] = auto_cl
                 cfg["storage"]["auto_cleanup_enabled"] = auto_cl
+            if "maxLogHistoryCapacity" in body_json:
+                log_cap_val = int(body_json["maxLogHistoryCapacity"])
+                env_updates["MAX_LOG_HISTORY_CAPACITY"] = log_cap_val
+                cfg["storage"]["max_log_history_capacity"] = log_cap_val
 
             if "immediateRun" in body_json:
                 imm_val = bool(body_json["immediateRun"])
                 env_updates["IMMEDIATE_RUN"] = str(imm_val).lower()
-                if imm_val and not is_crawling:
-                    run_crawler_async(mode=body_json.get("runMode", "current"))
+
+            if body_json.get("triggerImmediate") is True and not is_crawling:
+                run_crawler_async(mode=body_json.get("runMode", "current"))
 
             update_env_file(env_updates)
             save_config_yaml(cfg)
 
             # 立即执行一次修剪，确保修改容量上限后即刻生效
-            prune_msg = ""
+            prune_messages = []
             env_vars_current = parse_env_file()
             is_auto_clean = (
                 auto_cl if "autoCleanupEnabled" in body_json
@@ -1168,8 +1203,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 )
                 p_res = prune_database_records(max_capacity=final_cap, retention_days=final_ret)
                 if p_res["deletedItems"] > 0:
-                    prune_msg = f"（已自动淘汰 {p_res['deletedItems']} 条超出上限的数据）"
+                    prune_messages.append(f"淘汰 {p_res['deletedItems']} 条超量热搜")
 
+            # 修剪历史任务日志至最新上限
+            final_log_cap = (
+                log_cap_val if "maxLogHistoryCapacity" in body_json
+                else int(env_vars_current.get("MAX_LOG_HISTORY_CAPACITY", "200"))
+            )
+            trimmed_logs = prune_crawl_history(max_capacity=final_log_cap)
+            if trimmed_logs > 0:
+                prune_messages.append(f"修剪淘汰 {trimmed_logs} 条超出上限的历史日志")
+
+            prune_msg = f"（已自动{ '，'.join(prune_messages) }）" if prune_messages else ""
             self._send_json({"code": 0, "message": f"配置已成功保存并写回！{prune_msg}"})
             return
 
@@ -1179,9 +1224,16 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             storage_cfg = cfg.get("storage", {})
             max_capacity = int(env_vars.get("MAX_NEWS_CAPACITY", storage_cfg.get("max_news_capacity", 1000)))
             retention_days = int(env_vars.get("DATA_RETENTION_DAYS", storage_cfg.get("data_retention_days", 30)))
+            max_log_cap = int(env_vars.get("MAX_LOG_HISTORY_CAPACITY", storage_cfg.get("max_log_history_capacity", 200)))
 
             res = prune_database_records(max_capacity=max_capacity, retention_days=retention_days)
-            msg = f"清理完成！已淘汰 {res['deletedItems']} 条超量记录，清理 {res['deletedFiles']} 个过期历史归档文件。"
+            trimmed_logs = prune_crawl_history(max_capacity=max_log_cap)
+            res["deletedLogs"] = trimmed_logs
+
+            msg_parts = [f"已淘汰 {res['deletedItems']} 条超量记录", f"清理 {res['deletedFiles']} 个过期历史归档文件"]
+            if trimmed_logs > 0:
+                msg_parts.append(f"修剪 {trimmed_logs} 条超量任务日志")
+            msg = f"清理完成！{ '，'.join(msg_parts)}。"
             self._send_json({
                 "code": 0,
                 "message": msg,

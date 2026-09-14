@@ -9,18 +9,21 @@ interface StorageConfigCardProps {
   autoCleanupEnabled: boolean;
   maxNewsCapacity: number;
   dataRetentionDays: number;
-  onUpdate: (config: { autoCleanupEnabled?: boolean; maxNewsCapacity?: number; dataRetentionDays?: number }) => void;
+  maxLogHistoryCapacity?: number;
+  onUpdate: (config: { autoCleanupEnabled?: boolean; maxNewsCapacity?: number; dataRetentionDays?: number; maxLogHistoryCapacity?: number }) => void;
   onManualCleanup: () => Promise<{ success: boolean; message: string }>;
 }
 
 const CAPACITY_PRESETS = [500, 1000, 2000, 5000];
 const RETENTION_PRESETS = [7, 15, 30, 90];
+const LOG_CAPACITY_PRESETS = [50, 100, 200, 500];
 
 export const StorageConfigCard: React.FC<StorageConfigCardProps> = (props) => {
   const {
     autoCleanupEnabled,
     maxNewsCapacity,
     dataRetentionDays,
+    maxLogHistoryCapacity = 200,
     onUpdate,
     onManualCleanup,
   } = props;
@@ -53,7 +56,7 @@ export const StorageConfigCard: React.FC<StorageConfigCardProps> = (props) => {
             <div>
               <CardTitle className="text-sm font-semibold">数据容量与生命周期管理</CardTitle>
               <CardDescription className="text-xs">
-                配置单日 SQLite 数据库容量上限与跨天归档保留策略，实现自动化存储管理
+                配置单日 SQLite 数据库容量上限、历史任务日志批次上限与跨天归档保留策略
               </CardDescription>
             </div>
           </div>
@@ -71,7 +74,7 @@ export const StorageConfigCard: React.FC<StorageConfigCardProps> = (props) => {
       </CardHeader>
 
       <CardContent className="space-y-5 border-t border-zinc-100 pt-4 dark:border-zinc-800">
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
           {/* 单日最大条数限制 */}
           <div className="space-y-2 rounded-lg border border-zinc-100 p-3.5 dark:border-zinc-800/80">
             <div className="flex items-center justify-between">
@@ -83,7 +86,7 @@ export const StorageConfigCard: React.FC<StorageConfigCardProps> = (props) => {
               </span>
             </div>
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              💡 <span className="text-zinc-600 dark:text-zinc-300 font-medium">针对单天数据库：</span>限制当天单个 SQLite 数据库（如 2026-08-26.db）累计容纳的热搜上限，超出时自动淘汰最早入库的脱榜旧热点。
+              💡 <span className="text-zinc-600 dark:text-zinc-300 font-medium">单天热点库：</span>限制单天 SQLite 库容纳上限，超出时自动淘汰最早入库的脱榜旧热点。
             </p>
             <div className="flex items-center gap-2 pt-1">
               <Input
@@ -113,6 +116,47 @@ export const StorageConfigCard: React.FC<StorageConfigCardProps> = (props) => {
             </div>
           </div>
 
+          {/* 任务执行日志保留上限 */}
+          <div className="space-y-2 rounded-lg border border-zinc-100 p-3.5 dark:border-zinc-800/80">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                任务日志最大保留 (批次)
+              </label>
+              <span className="text-[10px] font-mono text-zinc-400">
+                日志批次限制
+              </span>
+            </div>
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              💡 <span className="text-zinc-600 dark:text-zinc-300 font-medium">抓取执行日志：</span>限制保留的历史抓取批次数，超出时按 FIFO 自动修剪淘汰最旧批次。
+            </p>
+            <div className="flex items-center gap-2 pt-1">
+              <Input
+                type="number"
+                min={10}
+                max={1000}
+                value={maxLogHistoryCapacity}
+                onChange={(e) => onUpdate({ maxLogHistoryCapacity: Number(e.target.value) || 200 })}
+                className="font-mono text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 pt-1">
+              {LOG_CAPACITY_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => onUpdate({ maxLogHistoryCapacity: preset })}
+                  className={`rounded px-2 py-0.5 text-[10px] font-mono transition-colors ${
+                    maxLogHistoryCapacity === preset
+                      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 font-bold'
+                      : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400'
+                  }`}
+                >
+                  {preset}条
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* 历史归档保留天数 */}
           <div className="space-y-2 rounded-lg border border-zinc-100 p-3.5 dark:border-zinc-800/80">
             <div className="flex items-center justify-between">
@@ -124,7 +168,7 @@ export const StorageConfigCard: React.FC<StorageConfigCardProps> = (props) => {
               </span>
             </div>
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              💡 <span className="text-zinc-600 dark:text-zinc-300 font-medium">针对跨天归档总库：</span>限制历史归档的时间跨度，系统将自动清理超出天数的过期 .db 数据库与静态 HTML 报告文件。
+              💡 <span className="text-zinc-600 dark:text-zinc-300 font-medium">跨天归档总库：</span>限制历史归档的时间跨度，系统将自动清理超出天数的过期 .db 与报告。
             </p>
             <div className="flex items-center gap-2 pt-1">
               <Input
@@ -158,7 +202,7 @@ export const StorageConfigCard: React.FC<StorageConfigCardProps> = (props) => {
         {/* 手动清理操作栏 */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg bg-zinc-50/80 p-3 dark:bg-zinc-950/60 border border-zinc-100 dark:border-zinc-800/80">
           <div className="text-xs text-zinc-500 dark:text-zinc-400">
-            <span>支持按当前设定的单日容量上限与保留天数，立即对本地数据库和历史报告执行一次安全修剪。</span>
+            <span>支持按当前设定的单日容量上限、日志保留批次与保留天数，立即对本地数据库、执行日志和历史报告执行一次安全修剪。</span>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">

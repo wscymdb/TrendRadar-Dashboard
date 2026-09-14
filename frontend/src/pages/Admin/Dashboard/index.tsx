@@ -8,6 +8,8 @@ import {
   Terminal,
   ExternalLink,
   Flame,
+  CheckCircle2,
+  Loader2,
 } from 'lucide-react';
 import { useNewsStore } from '@/stores/useNewsStore';
 import { useFeedsStore } from '@/stores/useFeedsStore';
@@ -19,13 +21,43 @@ import { Badge } from '@/components/ui/Badge';
 import { LogDrawer } from './LogDrawer';
 import { cn } from '@/lib/utils';
 
+const formatCronPeriod = (cron: string): string => {
+  if (!cron) return '每 30 分钟一次';
+  const trimmed = cron.trim();
+  if (trimmed === '*/30 * * * *') return '每 30 分钟一次';
+  if (trimmed === '*/15 * * * *') return '每 15 分钟一次';
+  if (trimmed === '0 * * * *' || trimmed === '*/60 * * * *') return '每小时整点一次';
+  if (trimmed === '0 */2 * * *') return '每 2 小时一次';
+  if (trimmed === '0 8,12,18 * * *') return '每日 3 次 (08, 12, 18点)';
+
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 5) {
+    const [min, hour] = parts;
+    if (min.startsWith('*/')) {
+      return `每 ${min.replace('*/', '')} 分钟一次`;
+    }
+    if (hour.startsWith('*/') && min === '0') {
+      return `每 ${hour.replace('*/', '')} 小时一次`;
+    }
+    if (hour.includes(',') && min === '0') {
+      return `每日 ${hour.split(',').length} 次 (${hour}点)`;
+    }
+    if (min === '0' && !isNaN(Number(hour))) {
+      return `每天 ${hour.padStart(2, '0')}:00 一次`;
+    }
+    return `Cron: ${trimmed}`;
+  }
+  return trimmed || '每 30 分钟一次';
+};
+
 const DashboardPage: React.FC = () => {
   const { newsList, isCrawling, crawlProgress, logs, lastCrawlTime, triggerCrawl, fetchLatestNews, pollLogs } = useNewsStore();
   const { platforms, rssFeeds, syncFromBackend: syncFeeds } = useFeedsStore();
   const { keywordGroups, syncFromBackend: syncKeywords } = useKeywordsStore();
-  const { runMode, setRunConfig, syncFromBackend: syncConfig } = useConfigStore();
+  const { runMode, cronSchedule, syncFromBackend: syncConfig, saveRunModeOnly } = useConfigStore();
 
   const [showLogs, setShowLogs] = useState(false);
+  const [modeToast, setModeToast] = useState<string | null>(null);
 
   useEffect(() => {
     fetchLatestNews();
@@ -37,14 +69,38 @@ const DashboardPage: React.FC = () => {
 
   const activePlatformsCount = platforms.filter((p) => p.enabled).length;
   const totalKeywordsCount = Object.values(keywordGroups).flat().length;
+  const currentMode = runMode || 'current';
 
   const handleStartCrawl = () => {
     setShowLogs(true);
     triggerCrawl();
   };
 
+  const handleModeSelect = async (mode: 'current' | 'daily' | 'incremental') => {
+    try {
+      await saveRunModeOnly(mode);
+      const modeLabels: Record<string, string> = {
+        current: '实时当前榜单模式',
+        daily: '每日历史汇总模式',
+        incremental: '增量模式',
+      };
+      setModeToast(`已将抓取策略切换并保存为: ${modeLabels[mode] || mode}`);
+      setTimeout(() => setModeToast(null), 3000);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="relative space-y-6">
+      {/* 优雅的模式切换 Toast 提示 */}
+      {modeToast && (
+        <div className="fixed right-6 top-20 z-50 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/95 px-4 py-2.5 text-xs text-emerald-900 shadow-xl backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-4 dark:border-emerald-800 dark:bg-emerald-950/90 dark:text-emerald-200">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <span className="font-medium">{modeToast}</span>
+        </div>
+      )}
+
       {/* 顶部标题与主要操作区 */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -70,10 +126,19 @@ const DashboardPage: React.FC = () => {
           <Button
             onClick={handleStartCrawl}
             disabled={isCrawling}
-            className="h-9 gap-2 text-xs font-semibold shadow-sm"
+            className="h-9 gap-2 text-xs font-semibold shadow-sm transition-all"
           >
-            <Play className={cn('h-3.5 w-3.5', isCrawling && 'animate-spin')} />
-            <span>{isCrawling ? `抓取执行中 (${crawlProgress}%)` : '立即抓取热点'}</span>
+            {isCrawling ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span>抓取执行中...</span>
+              </>
+            ) : (
+              <>
+                <Play className="h-3.5 w-3.5 fill-current" />
+                <span>立即抓取热点</span>
+              </>
+            )}
           </Button>
         </div>
       </div>
@@ -144,45 +209,89 @@ const DashboardPage: React.FC = () => {
             <div className="text-lg font-bold font-mono text-zinc-900 dark:text-zinc-50 truncate">
               {lastCrawlTime.split(' ')[1] || lastCrawlTime}
             </div>
-            <p className="mt-1 text-[11px] text-zinc-400">周期: 每 30 分钟一次</p>
+            <p className="mt-1 text-[11px] text-zinc-400">
+              周期: {formatCronPeriod(cronSchedule)}
+            </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* 抓取模式与守护进程控制区 */}
+      {/* 热点推送与分析策略设定 */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Activity className="h-4 w-4 text-zinc-500" />
-              <CardTitle className="text-sm font-semibold">抓取与调度模式设定</CardTitle>
+              <div>
+                <CardTitle className="text-sm font-semibold">热点推送与分析策略</CardTitle>
+              </div>
             </div>
             <Badge variant="outline" className="text-xs font-mono text-zinc-500">
-              模式: {runMode === 'current' ? '实时当前榜单' : runMode === 'daily' ? '每日历史汇总' : '增量采集'}
+              当前策略: {currentMode === 'current' ? '实时榜单' : currentMode === 'daily' ? '每日汇总' : '增量对比'}
             </Badge>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {[
-              { mode: 'current', label: '实时榜单模式 (current)', desc: '仅抓取各大平台当下的最新热门榜单' },
-              { mode: 'daily', label: '每日汇总模式 (daily)', desc: '全天多次汇总，生成热点频次统计日报' },
-              { mode: 'incremental', label: '增量模式 (incremental)', desc: '对比上一轮数据，仅推送首次上榜的新突发热搜' },
-            ].map((item) => (
-              <div
-                key={item.mode}
-                onClick={() => setRunConfig({ runMode: item.mode as any })}
-                className={cn(
-                  'cursor-pointer rounded-lg border p-3.5 transition-all text-xs',
-                  runMode === item.mode
-                    ? 'border-zinc-900 bg-zinc-100/80 font-medium dark:border-zinc-100 dark:bg-zinc-800/80'
-                    : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700'
-                )}
-              >
-                <div className="font-semibold text-zinc-900 dark:text-zinc-100 mb-1">{item.label}</div>
-                <div className="text-zinc-500 dark:text-zinc-400 text-[11px]">{item.desc}</div>
-              </div>
-            ))}
+              {
+                mode: 'current',
+                label: '实时榜单模式 (current)',
+                badge: '推荐日常',
+                badgeColor: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
+                desc: '抓取各大平台当下的最新 Top 榜单并即刻分发。',
+                cronTip: '💡 搭配建议：每 15~60 分钟巡检一次',
+              },
+              {
+                mode: 'daily',
+                label: '每日汇总模式 (daily)',
+                badge: '全天日报',
+                badgeColor: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
+                desc: '全天多次汇总，生成热点频次统计与霸榜深度简报。',
+                cronTip: '💡 搭配建议：每天定点 1~3 次 (如 18:00)',
+              },
+              {
+                mode: 'incremental',
+                label: '增量模式 (incremental)',
+                badge: '突发防刷屏',
+                badgeColor: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
+                desc: '自动对比上一轮，仅预警首次上榜的全新突发热点。',
+                cronTip: '💡 搭配建议：每 10~15 分钟高频哨兵',
+              },
+            ].map((item) => {
+              const isActive = currentMode === item.mode;
+              return (
+                <div
+                  key={item.mode}
+                  onClick={() => handleModeSelect(item.mode as any)}
+                  className={cn(
+                    'cursor-pointer rounded-lg border p-3.5 transition-all text-xs relative select-none flex flex-col justify-between gap-2.5',
+                    isActive
+                      ? 'border-zinc-900 bg-zinc-100/90 font-medium dark:border-zinc-100 dark:bg-zinc-800 shadow-sm'
+                      : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700 bg-white/50 dark:bg-zinc-900/40'
+                  )}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-zinc-900 dark:text-zinc-100">{item.label}</span>
+                        <span className={cn('text-[10px] px-1.5 py-0.2 rounded border font-normal', item.badgeColor)}>
+                          {item.badge}
+                        </span>
+                      </div>
+                      {isActive && (
+                        <CheckCircle2 className="h-4 w-4 text-zinc-900 dark:text-zinc-100 shrink-0" />
+                      )}
+                    </div>
+                    <div className="text-zinc-500 dark:text-zinc-400 text-[11px] leading-relaxed">{item.desc}</div>
+                  </div>
+
+                  <div className="text-[10px] text-zinc-400 dark:text-zinc-500 pt-1 border-t border-zinc-200/50 dark:border-zinc-700/50 font-mono">
+                    {item.cronTip}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </CardContent>
       </Card>

@@ -186,6 +186,7 @@ const ConfigPage: React.FC = () => {
         autoCleanupEnabled={config.autoCleanupEnabled}
         maxNewsCapacity={config.maxNewsCapacity}
         dataRetentionDays={config.dataRetentionDays}
+        maxLogHistoryCapacity={config.maxLogHistoryCapacity}
         onUpdate={config.setStorageConfig}
         onManualCleanup={config.triggerManualCleanup}
       />

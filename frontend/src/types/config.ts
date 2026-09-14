@@ -40,4 +40,6 @@ export interface ConfigState {
   maxNewsCapacity: number;
   dataRetentionDays: number;
   autoCleanupEnabled: boolean;
+  maxLogHistoryCapacity: number;
 }
+

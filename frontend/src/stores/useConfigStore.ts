@@ -28,7 +28,8 @@ interface ConfigStore extends ConfigState {
   updateWebhookItem: (channel: 'dingtalk' | 'feishu' | 'wework', id: string, patch: Partial<WebhookItem>) => void;
   removeWebhookItem: (channel: 'dingtalk' | 'feishu' | 'wework', id: string) => void;
   setRunConfig: (config: Partial<Pick<ConfigState, 'runMode' | 'cronSchedule' | 'immediateRun'>>) => void;
-  setStorageConfig: (config: Partial<Pick<ConfigState, 'maxNewsCapacity' | 'dataRetentionDays' | 'autoCleanupEnabled'>>) => void;
+  saveRunModeOnly: (mode: 'current' | 'daily' | 'incremental') => Promise<{ success: boolean; message: string }>;
+  setStorageConfig: (config: Partial<Pick<ConfigState, 'maxNewsCapacity' | 'dataRetentionDays' | 'autoCleanupEnabled' | 'maxLogHistoryCapacity'>>) => void;
   triggerManualCleanup: () => Promise<{ success: boolean; message: string; data?: any }>;
   syncFromBackend: () => Promise<void>;
   saveToBackend: () => Promise<{ success: boolean; message: string }>;
@@ -61,6 +62,7 @@ const DEFAULT_CONFIG: ConfigState = {
   maxNewsCapacity: 1000,
   dataRetentionDays: 30,
   autoCleanupEnabled: true,
+  maxLogHistoryCapacity: 200,
 };
 
 export const useConfigStore = create<ConfigStore>()(
@@ -121,6 +123,14 @@ export const useConfigStore = create<ConfigStore>()(
       },
       setRunConfig: (cfg) => {
         set((state) => ({ ...state, ...cfg }));
+      },
+      saveRunModeOnly: async (mode) => {
+        set({ runMode: mode });
+        const res = await Api.saveConfig({ runMode: mode });
+        return {
+          success: res.success,
+          message: res.message || '抓取模式已成功更新',
+        };
       },
       setStorageConfig: (cfg) => {
         set((state) => ({ ...state, ...cfg }));
