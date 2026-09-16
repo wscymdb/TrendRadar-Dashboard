@@ -51,12 +51,12 @@ WEBHOOKS_FILE = CONFIG_DIR / "webhooks.json"
 
 
 def get_admin_password() -> str:
-    """获取管理密码，优先从环境变量，其次从 .env 文件"""
+    """获取管理密码，优先从环境变量，其次从 .env 文件，若未配置则默认兜底为 trendradar"""
     pwd = os.environ.get("ADMIN_PASSWORD", "").strip()
     if not pwd:
         env_vars = parse_env_file()
         pwd = env_vars.get("ADMIN_PASSWORD", "").strip()
-    return pwd
+    return pwd or "trendradar"
 
 
 def generate_auth_token(password: str) -> str:
@@ -68,20 +68,18 @@ def generate_auth_token(password: str) -> str:
 
 
 def is_auth_enabled() -> bool:
-    """检查系统是否配置了访问密码"""
-    return bool(get_admin_password())
+    """系统全量强制要求安全认证"""
+    return True
 
 
 def verify_request_auth(headers) -> bool:
     """校验客户端请求头中的 Authorization Bearer Token 是否有效"""
-    if not is_auth_enabled():
-        return True  # 未设置密码时，开发模式自动放行
     auth_header = headers.get("Authorization", "").strip()
     if not auth_header.startswith("Bearer "):
         return False
     client_token = auth_header[7:].strip()
     expected_token = generate_auth_token(get_admin_password())
-    return client_token == expected_token
+    return bool(client_token and expected_token and client_token == expected_token)
 
 
 
@@ -1547,14 +1545,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/auth/login":
             pwd = body_json.get("password", "").strip()
             real_pwd = get_admin_password()
-            if not is_auth_enabled():
-                self._send_json({"code": 0, "message": "系统免密模式", "data": {"token": "dev_no_auth_needed"}})
+            if not pwd:
+                self._send_json({"code": 1, "message": "请输入访问密码"}, code=400)
                 return
             if pwd == real_pwd:
                 token = generate_auth_token(real_pwd)
                 self._send_json({"code": 0, "message": "身份验证成功", "data": {"token": token}})
             else:
-                self._send_json({"code": 1, "message": "管理密码不正确，请重新输入"}, code=401)
+                self._send_json({"code": 1, "message": "访问密码错误，请重新输入"}, code=401)
             return
 
         elif path == "/api/auth/logout":

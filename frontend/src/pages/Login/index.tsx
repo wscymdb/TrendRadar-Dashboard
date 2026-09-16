@@ -5,7 +5,8 @@ import { Api, setAuthToken, getAuthToken } from '@/api';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 
-const LoginPage: React.FC = () => {
+const LoginPage: React.FC = (props) => {
+  const {} = props;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const from = searchParams.get('from') || '/';
@@ -15,24 +16,20 @@ const LoginPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
-  const [needAuth, setNeedAuth] = useState<boolean | null>(null);
   const [shake, setShake] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
     const token = getAuthToken();
 
-    Api.getAuthStatus().then((res) => {
-      if (!isMounted) return;
-      if (res.success && res.data) {
-        setNeedAuth(res.data.needAuth);
-        if (token && res.data.isAuthenticated) {
+    if (token) {
+      Api.getAuthStatus().then((res) => {
+        if (!isMounted) return;
+        if (res.success && res.data?.isAuthenticated) {
           navigate(from, { replace: true });
         }
-      } else {
-        setNeedAuth(true);
-      }
-    });
+      });
+    }
 
     return () => {
       isMounted = false;
@@ -47,13 +44,6 @@ const LoginPage: React.FC = () => {
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (loading || isSuccess) return;
-
-    if (needAuth === false) {
-      setAuthToken('dev_no_auth_needed');
-      setIsSuccess(true);
-      setTimeout(() => navigate(from, { replace: true }), 300);
-      return;
-    }
 
     const trimmed = password.trim();
     if (!trimmed) {
@@ -156,22 +146,20 @@ const LoginPage: React.FC = () => {
                 setPassword(e.target.value);
                 if (errorMsg) setErrorMsg(null);
               }}
-              placeholder={needAuth === false ? '免密模式，直接进入' : '输入访问密码...'}
-              disabled={loading || isSuccess || needAuth === false}
+              placeholder="输入访问密码..."
+              disabled={loading || isSuccess}
               autoFocus
               className="h-11 w-full bg-zinc-950/70 border-zinc-800 text-sm text-zinc-100 placeholder:text-zinc-500 rounded-xl focus-visible:border-amber-500/60 focus-visible:ring-2 focus-visible:ring-amber-500/20 pl-10 pr-10 transition-all font-mono tracking-wide"
             />
 
-            {needAuth !== false && (
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors focus:outline-none"
-                tabIndex={-1}
-              >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors focus:outline-none"
+              tabIndex={-1}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
           </div>
 
           <Button
@@ -189,7 +177,7 @@ const LoginPage: React.FC = () => {
               <span>验证通过 · 进入中...</span>
             ) : (
               <>
-                <span>{needAuth === false ? '直接进入系统' : '解锁进入'}</span>
+                <span>解锁进入</span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </>
             )}
@@ -207,3 +195,5 @@ const LoginPage: React.FC = () => {
 };
 
 export default LoginPage;
+export { LoginPage };
+
