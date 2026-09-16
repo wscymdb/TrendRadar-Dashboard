@@ -114,4 +114,10 @@ export const Api = {
       method: 'POST',
       body: JSON.stringify({ channel, url }),
     }),
+
+  // 7. 系统驾驶舱与性能监控
+  getSystemOverview: () => fetchApi('/api/system/overview'),
+  getSystemMetrics: () => fetchApi('/api/system/metrics'),
+  getSystemProbes: () => fetchApi('/api/system/probes'),
+  cleanSystemLogs: () => fetchApi('/api/system/clean-logs', { method: 'POST' }),
 };
