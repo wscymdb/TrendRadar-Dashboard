@@ -27,6 +27,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Any, Optional
 import platform
 import resource
+import hashlib
 
 try:
     import psutil
@@ -47,6 +48,41 @@ WEB_DIST_DIR = BASE_DIR / "web" / "dist"
 ENV_FILE = BASE_DIR / "docker" / ".env"
 FALLBACK_ENV_FILE = BASE_DIR / ".env"
 WEBHOOKS_FILE = CONFIG_DIR / "webhooks.json"
+
+
+def get_admin_password() -> str:
+    """获取管理密码，优先从环境变量，其次从 .env 文件"""
+    pwd = os.environ.get("ADMIN_PASSWORD", "").strip()
+    if not pwd:
+        env_vars = parse_env_file()
+        pwd = env_vars.get("ADMIN_PASSWORD", "").strip()
+    return pwd
+
+
+def generate_auth_token(password: str) -> str:
+    """根据密码与专属加盐计算 SHA-256 签名凭据，防明文泄露"""
+    if not password:
+        return ""
+    salt = "_trendradar_secure_salt_2026"
+    return hashlib.sha256((password + salt).encode("utf-8")).hexdigest()
+
+
+def is_auth_enabled() -> bool:
+    """检查系统是否配置了访问密码"""
+    return bool(get_admin_password())
+
+
+def verify_request_auth(headers) -> bool:
+    """校验客户端请求头中的 Authorization Bearer Token 是否有效"""
+    if not is_auth_enabled():
+        return True  # 未设置密码时，开发模式自动放行
+    auth_header = headers.get("Authorization", "").strip()
+    if not auth_header.startswith("Bearer "):
+        return False
+    client_token = auth_header[7:].strip()
+    expected_token = generate_auth_token(get_admin_password())
+    return client_token == expected_token
+
 
 
 def load_webhooks_data() -> Dict[str, List[Dict[str, Any]]]:
@@ -854,6 +890,7 @@ def run_crawler_async(mode: str = "current", trigger_type: str = "manual"):
         if is_crawling:
             return
         is_crawling = True
+        crawl_logs.clear()  # 每次启动新抓取时清空上一轮的实时日志，确保终端输出纯净
 
     def _worker():
         global is_crawling, last_crawl_time
@@ -881,9 +918,57 @@ def run_crawler_async(mode: str = "current", trigger_type: str = "manual"):
 
         try:
             env = os.environ.copy()
+
+            # 1. 动态加载最新的 .env 文件环境变量并注入子进程
+            file_env = parse_env_file()
+            for k, v in file_env.items():
+                if v:
+                    env[k] = str(v)
+
+            # 2. 从 webhooks.json 聚合已启用的全部 Webhook，按渠道分号拼接
+            wh_data = load_webhooks_data()
+            for ch_key, env_key in [
+                ("dingtalk", "DINGTALK_WEBHOOK_URL"),
+                ("feishu", "FEISHU_WEBHOOK_URL"),
+                ("wework", "WEWORK_WEBHOOK_URL"),
+            ]:
+                valid_urls = [
+                    x["url"].strip()
+                    for x in wh_data.get(ch_key, [])
+                    if x.get("enabled", True) and x.get("url", "").strip()
+                ]
+                if valid_urls:
+                    env[env_key] = ";".join(valid_urls)
+                elif env_key in file_env and file_env[env_key]:
+                    env[env_key] = file_env[env_key]
+
+            # 3. 强制确保通知开关为 true
+            env["ENABLE_NOTIFICATION"] = "true"
             env["RUN_MODE"] = mode
             env["PYTHONUNBUFFERED"] = "1"
             env["DOCKER_CONTAINER"] = "true"  # 开启静默运行，禁止唤起本地图形浏览器
+
+            # 4. 同步更新 config/config.yaml 中的通知渠道，提供双重保障
+            try:
+                cfg = load_config_yaml()
+                if "notification" not in cfg:
+                    cfg["notification"] = {}
+                cfg["notification"]["enabled"] = True
+                if "channels" not in cfg["notification"]:
+                    cfg["notification"]["channels"] = {}
+                channels = cfg["notification"]["channels"]
+                for ch_key, env_key in [
+                    ("dingtalk", "DINGTALK_WEBHOOK_URL"),
+                    ("feishu", "FEISHU_WEBHOOK_URL"),
+                    ("wework", "WEWORK_WEBHOOK_URL"),
+                ]:
+                    if env.get(env_key):
+                        if ch_key not in channels:
+                            channels[ch_key] = {}
+                        channels[ch_key]["webhook_url"] = env[env_key]
+                save_config_yaml(cfg)
+            except Exception as e:
+                print(f"[Warn] 动态同步 config.yaml 通知渠道失败: {e}")
 
             process = subprocess.Popen(
                 [python_bin, "-u", "-m", "trendradar"],
@@ -1094,6 +1179,25 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         # -------------------------------------------------------------
         # REST API 路由
         # -------------------------------------------------------------
+        if path == "/api/auth/status":
+            enabled = is_auth_enabled()
+            authed = verify_request_auth(self.headers)
+            self._send_json({
+                "code": 0,
+                "message": "success",
+                "data": {
+                    "needAuth": enabled,
+                    "isAuthenticated": authed,
+                }
+            })
+            return
+
+        # 全站 API 鉴权拦截 (除 /api/auth/* 登录接口外，未授权全量拦截 401)
+        if path.startswith("/api/") and not path.startswith("/api/auth/"):
+            if not verify_request_auth(self.headers):
+                self._send_json({"code": 401, "message": "未经授权，请先登录系统"}, code=401)
+                return
+
         if path == "/api/status":
             env_vars = parse_env_file()
             cfg = load_config_yaml()
@@ -1110,7 +1214,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "timezone": cfg.get("app", {}).get("timezone", "Asia/Shanghai"),
                     "cronSchedule": env_vars.get("CRON_SCHEDULE", "*/30 * * * *"),
                     "runMode": env_vars.get("RUN_MODE", "current"),
-                    "immediateRun": env_vars.get("IMMEDIATE_RUN", "true").lower() == "true",
+                    "immediateRun": env_vars.get("IMMEDIATE_RUN", "false").lower() == "true",
                     "isCrawling": is_crawling,
                     "lastCrawlTime": last_crawl_time,
                     "platformCount": {"total": len(p_sources) or 11, "enabled": active_p or 11},
@@ -1206,7 +1310,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "telegramChatId": env_vars.get("TELEGRAM_CHAT_ID") or notif_cfg.get("telegram", {}).get("chat_id", ""),
                     "cronSchedule": env_vars.get("CRON_SCHEDULE", "*/30 * * * *"),
                     "runMode": env_vars.get("RUN_MODE", "current"),
-                    "immediateRun": env_vars.get("IMMEDIATE_RUN", "true").lower() == "true",
+                    "immediateRun": env_vars.get("IMMEDIATE_RUN", "false").lower() == "true",
                     "maxNewsCapacity": max_capacity,
                     "dataRetentionDays": retention_days,
                     "autoCleanupEnabled": auto_cleanup,
@@ -1439,6 +1543,28 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             body_json = json.loads(post_body.decode("utf-8")) if post_body else {}
         except Exception:
             body_json = {}
+
+        if path == "/api/auth/login":
+            pwd = body_json.get("password", "").strip()
+            real_pwd = get_admin_password()
+            if not is_auth_enabled():
+                self._send_json({"code": 0, "message": "系统免密模式", "data": {"token": "dev_no_auth_needed"}})
+                return
+            if pwd == real_pwd:
+                token = generate_auth_token(real_pwd)
+                self._send_json({"code": 0, "message": "身份验证成功", "data": {"token": token}})
+            else:
+                self._send_json({"code": 1, "message": "管理密码不正确，请重新输入"}, code=401)
+            return
+
+        elif path == "/api/auth/logout":
+            self._send_json({"code": 0, "message": "已安全退出"})
+            return
+
+        # 检查除登录外的所有 POST 接口鉴权
+        if path.startswith("/api/") and not verify_request_auth(self.headers):
+            self._send_json({"code": 401, "message": "未经授权，请先登录管理控制台"}, code=401)
+            return
 
         if path == "/api/crawl":
             mode = body_json.get("mode", "current")
@@ -1768,6 +1894,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"code": 1, "message": f"Webhook 网络请求异常: {str(e)}"}, code=400)
             return
 
+        elif path in ["/api/crawl/logs/clear", "/api/crawl/logs"]:
+            with crawl_lock:
+                crawl_logs.clear()
+            self._send_json({"code": 0, "message": "实时日志已成功清屏！"})
+            return
+
         elif path in ["/api/crawl/history/clear", "/api/crawl/history"]:
             save_crawl_history([])
             self._send_json({"code": 0, "message": "历史抓取日志已成功全部清空！"})
@@ -1778,7 +1910,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
-        if path == "/api/crawl/history":
+        if path.startswith("/api/") and not verify_request_auth(self.headers):
+            self._send_json({"code": 401, "message": "未经授权，请先登录管理控制台"}, code=401)
+            return
+        if path in ["/api/crawl/logs", "/api/crawl/logs/clear"]:
+            with crawl_lock:
+                crawl_logs.clear()
+            self._send_json({"code": 0, "message": "实时日志已成功清屏！"})
+            return
+        elif path == "/api/crawl/history":
             save_crawl_history([])
             self._send_json({"code": 0, "message": "历史抓取日志已成功全部清空！"})
             return
@@ -1829,11 +1969,8 @@ def run_server(port: int = PORT):
     # 1. 启动后台 Cron 守护调度引擎
     start_cron_scheduler()
 
-    # 2. 检查启动即刻执行
-    env_vars = parse_env_file()
-    if env_vars.get("IMMEDIATE_RUN", "true").lower() == "true":
-        print("🚀 [启动即跑] IMMEDIATE_RUN=true，后台启动初始抓取任务...")
-        run_crawler_async(mode=env_vars.get("RUN_MODE", "current"))
+    # 关闭启动即跑功能，仅由用户手动点击或定时 Cron 调度触发
+
 
     try:
         httpd.serve_forever()

@@ -15,6 +15,7 @@ services:
     volumes:
       - ../config:/app/config
       - ../output:/app/output
+      - ./.env:/app/docker/.env
 
     environment:
       - TZ=Asia/Shanghai

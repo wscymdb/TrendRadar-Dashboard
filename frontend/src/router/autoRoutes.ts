@@ -62,7 +62,12 @@ function extractFlattenedRoutes(
  */
 function buildMenuTree(metas: RouteMeta[]): MenuItem[] {
   return metas
-    .filter((m) => !m.hideInMenu && m.layout !== 'home')
+    .filter(
+      (m) =>
+        !m.hideInMenu &&
+        m.layout !== 'home' &&
+        m.layout !== 'none'
+    )
     .sort((a, b) => (a.order ?? 99) - (b.order ?? 99))
     .map((m) => ({
       title: m.title,

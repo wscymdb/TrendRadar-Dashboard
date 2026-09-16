@@ -23,6 +23,7 @@ interface NewsStore {
   fetchLatestNews: (scope?: 'current' | 'history', date?: string) => Promise<void>;
   triggerCrawl: () => Promise<void>;
   pollLogs: () => Promise<void>;
+  clearLogs: () => Promise<void>;
 }
 
 export const useNewsStore = create<NewsStore>((set, get) => ({
@@ -84,6 +85,14 @@ export const useNewsStore = create<NewsStore>((set, get) => ({
       }
     }
   },
+  clearLogs: async () => {
+    set({ logs: [] });
+    try {
+      await Api.clearCrawlLogs();
+    } catch (e) {
+      console.error(e);
+    }
+  },
   pollLogs: async () => {
     const res = await Api.getCrawlLogs();
     if (res.success && res.data) {
@@ -97,6 +106,11 @@ export const useNewsStore = create<NewsStore>((set, get) => ({
   triggerCrawl: async () => {
     if (get().isCrawling) return;
     set({ isCrawling: true, crawlProgress: 15, logs: [] });
+    try {
+      await Api.clearCrawlLogs();
+    } catch {
+      // ignore
+    }
 
     const res = await Api.triggerCrawl();
 

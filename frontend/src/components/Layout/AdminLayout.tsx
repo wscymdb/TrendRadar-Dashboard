@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link, useLocation, Outlet } from 'react-router-dom';
+import React, { useState, useEffect } from "react";
+import { Link, useLocation, useNavigate, Outlet } from "react-router-dom";
 import {
   Radar,
   ArrowLeft,
@@ -7,23 +7,74 @@ import {
   Menu,
   X,
   Sparkles,
-} from 'lucide-react';
-import { adminMenuItems } from '@/router/autoRoutes';
-import { DynamicIcon } from '@/components/ui/DynamicIcon';
-import { ThemeToggle } from './ThemeToggle';
-import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { cn } from '@/lib/utils';
-import { useNewsStore } from '@/stores/useNewsStore';
+  LogOut,
+} from "lucide-react";
+import { adminMenuItems } from "@/router/autoRoutes";
+import { DynamicIcon } from "@/components/ui/DynamicIcon";
+import { ThemeToggle } from "./ThemeToggle";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/Tooltip";
+import { cn } from "@/lib/utils";
+import { useNewsStore } from "@/stores/useNewsStore";
+import { Api, getAuthToken, removeAuthToken } from "@/api";
 
-export const AdminLayout: React.FC = () => {
+const AdminLayout: React.FC = (props) => {
+  const {} = props;
   const location = useLocation();
+  const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { isCrawling } = useNewsStore();
 
+  // 路由认证守卫检查：若未登录直接强行拦截至 /login
+  useEffect(() => {
+    let isMounted = true;
+    const token = getAuthToken();
+
+    // 1. 本地无 Token：直接拦截重定向至登录页
+    if (!token) {
+      navigate(`/login?from=${encodeURIComponent(location.pathname)}`, {
+        replace: true,
+      });
+      return;
+    }
+
+    // 2. 本地有 Token：异步核验证书有效性（密码更改或过期时失效）
+    Api.getAuthStatus().then((res) => {
+      if (!isMounted) return;
+      if (res.success && res.data) {
+        if (res.data.needAuth && !res.data.isAuthenticated) {
+          removeAuthToken();
+          navigate(`/login?from=${encodeURIComponent(location.pathname)}`, {
+            replace: true,
+          });
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [location.pathname, navigate]);
+
+  const handleLogout = async () => {
+    removeAuthToken();
+    try {
+      await Api.logout();
+    } catch {
+      // ignore
+    }
+    navigate("/login", { replace: true });
+  };
+
   // 当前匹配的菜单项
   const currentMenu = adminMenuItems.find((m) =>
-    location.pathname.startsWith(m.path)
+    location.pathname.startsWith(m.path),
   );
 
   return (
@@ -39,8 +90,8 @@ export const AdminLayout: React.FC = () => {
       {/* 左侧固定侧边栏 (Sidebar: 固定高度 100vh，不随右侧滚动) */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 flex-col border-r border-zinc-200 bg-white transition-transform duration-200 ease-in-out dark:border-zinc-800/80 dark:bg-zinc-900 lg:static lg:translate-x-0',
-          mobileOpen ? 'translate-x-0' : '-translate-x-full'
+          "fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 flex-col border-r border-zinc-200 bg-white transition-transform duration-200 ease-in-out dark:border-zinc-800/80 dark:bg-zinc-900 lg:static lg:translate-x-0",
+          mobileOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
         {/* 侧栏顶部 Logo (固定) */}
@@ -86,20 +137,20 @@ export const AdminLayout: React.FC = () => {
                 to={item.path}
                 onClick={() => setMobileOpen(false)}
                 className={cn(
-                  'flex items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition-all group',
+                  "flex items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition-all group",
                   isActive
-                    ? 'bg-zinc-900 text-zinc-50 shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
-                    : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-50'
+                    ? "bg-zinc-900 text-zinc-50 shadow-sm dark:bg-zinc-100 dark:text-zinc-900"
+                    : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-50",
                 )}
               >
                 <div className="flex items-center space-x-2.5">
                   <DynamicIcon
                     icon={item.icon}
                     className={cn(
-                      'h-4 w-4 transition-transform group-hover:scale-110',
+                      "h-4 w-4 transition-transform group-hover:scale-110",
                       isActive
-                        ? 'text-zinc-50 dark:text-zinc-900'
-                        : 'text-zinc-500 dark:text-zinc-400'
+                        ? "text-zinc-50 dark:text-zinc-900"
+                        : "text-zinc-500 dark:text-zinc-400",
                     )}
                   />
                   <span>{item.title}</span>
@@ -107,11 +158,11 @@ export const AdminLayout: React.FC = () => {
 
                 {item.badge && (
                   <Badge
-                    variant={isActive ? 'secondary' : 'outline'}
+                    variant={isActive ? "secondary" : "outline"}
                     className={cn(
-                      'text-[10px] h-4 px-1.5',
+                      "text-[10px] h-4 px-1.5",
                       isActive &&
-                        'bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900'
+                        "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900",
                     )}
                   >
                     {item.badge}
@@ -156,7 +207,7 @@ export const AdminLayout: React.FC = () => {
               <span>管理后台</span>
               <ChevronRight className="h-3 w-3 text-zinc-400" />
               <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-                {currentMenu?.title || '控制台'}
+                {currentMenu?.title || "控制台"}
               </span>
             </div>
           </div>
@@ -173,20 +224,48 @@ export const AdminLayout: React.FC = () => {
               </Badge>
             )}
 
-            <ThemeToggle />
+            <div className="flex items-center space-x-1.5">
+              <ThemeToggle />
 
-            {/* 返回前台按钮 */}
-            <Link to="/">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 text-xs border-zinc-200 dark:border-zinc-800"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">返回前台主页</span>
-                <span className="sm:hidden">前台</span>
-              </Button>
-            </Link>
+              <TooltipProvider delayDuration={150}>
+                {/* 返回前台大屏 */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Link to="/">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="group relative h-9 w-9 rounded-full border border-zinc-200/80 bg-white/50 text-zinc-500 shadow-sm backdrop-blur-md transition-all duration-200 hover:scale-105 hover:bg-zinc-100 hover:text-zinc-900 active:scale-95 dark:border-zinc-800/80 dark:bg-zinc-900/50 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                      >
+                        <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+                        <span className="sr-only">返回前台主页</span>
+                      </Button>
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <p>返回前台主页</p>
+                  </TooltipContent>
+                </Tooltip>
+
+                {/* 安全注销退出登录 */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleLogout}
+                      className="group relative h-9 w-9 rounded-full border border-zinc-200/80 bg-white/50 text-zinc-500 shadow-sm backdrop-blur-md transition-all duration-200 hover:scale-105 hover:border-rose-300/60 hover:bg-rose-500/10 hover:text-rose-600 active:scale-95 dark:border-zinc-800/80 dark:bg-zinc-900/50 dark:text-zinc-400 dark:hover:border-rose-800/60 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+                    >
+                      <LogOut className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                      <span className="sr-only">退出登录</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    <p>退出登录</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
           </div>
         </header>
 
@@ -200,3 +279,6 @@ export const AdminLayout: React.FC = () => {
     </div>
   );
 };
+
+export default AdminLayout;
+export { AdminLayout };

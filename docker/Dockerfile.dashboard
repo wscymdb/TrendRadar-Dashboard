@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple pyyaml pytz requests litellm
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple pyyaml pytz requests litellm feedparser psutil tenacity json-repair
 
 # 复制爬虫内核、后台服务、默认配置以及编译好的 React 前端大屏产物
 COPY trendradar/ /app/trendradar/

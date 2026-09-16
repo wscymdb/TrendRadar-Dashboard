@@ -9,22 +9,64 @@ const API_BASE =
     ? 'http://localhost:7773'
     : '');
 
+const AUTH_TOKEN_KEY = 'trendradar_auth_token';
+
+export const getAuthToken = (): string => {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+
+export const setAuthToken = (token: string): void => {
+  try {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } catch {
+    // ignore
+  }
+};
+
+export const removeAuthToken = (): void => {
+  try {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch {
+    // ignore
+  }
+};
+
 export async function fetchApi<T = any>(
   endpoint: string,
   options: RequestInit = {}
-): Promise<{ success: boolean; data?: T; message?: string }> {
+): Promise<{ success: boolean; data?: T; message?: string; status?: number }> {
   try {
     const url = `${API_BASE}${endpoint}`;
+    const token = getAuthToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string>),
+    };
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const res = await fetch(url, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+      headers,
     });
 
+    if (res.status === 401) {
+      // 401 未授权拦截，若不在登录页则清除 token 并跳转
+      removeAuthToken();
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = `/login?from=${encodeURIComponent(window.location.pathname)}`;
+      }
+      return { success: false, status: 401, message: '未经授权或登录已过期，请重新登录' };
+    }
+
     if (!res.ok) {
-      return { success: false, message: `HTTP Error: ${res.status}` };
+      return { success: false, status: res.status, message: `HTTP Error: ${res.status}` };
     }
 
     const json = await res.json();
@@ -32,6 +74,7 @@ export async function fetchApi<T = any>(
       success: json.code === 0,
       data: json.data,
       message: json.message,
+      status: res.status,
     };
   } catch (error: any) {
     return { success: false, message: error.message || '网络请求失败' };
@@ -43,6 +86,18 @@ export async function fetchApi<T = any>(
 // -------------------------------------------------------------
 
 export const Api = {
+  // 0. 访问安全认证与鉴权
+  getAuthStatus: () => fetchApi<{ needAuth: boolean; isAuthenticated: boolean }>('/api/auth/status'),
+  login: (password: string) =>
+    fetchApi<{ token: string }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ password }),
+    }),
+  logout: () =>
+    fetchApi('/api/auth/logout', {
+      method: 'POST',
+    }),
+
   // 1. 系统状态
   getStatus: () => fetchApi('/api/status'),
 
@@ -53,6 +108,10 @@ export const Api = {
       body: JSON.stringify({ mode }),
     }),
   getCrawlLogs: () => fetchApi('/api/crawl/logs'),
+  clearCrawlLogs: () =>
+    fetchApi('/api/crawl/logs', {
+      method: 'DELETE',
+    }),
   getCrawlHistory: () => fetchApi('/api/crawl/history'),
   clearCrawlHistory: () =>
     fetchApi('/api/crawl/history', {

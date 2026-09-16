@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Terminal,
   Trash2,
   Copy,
   CheckCircle2,
   ChevronUp,
+  ArrowDown,
 } from 'lucide-react';
 import { CrawlLog } from '@/types/news';
 import { Button } from '@/components/ui/Button';
@@ -22,6 +23,62 @@ export const LogDrawer: React.FC<LogDrawerProps> = (props) => {
   const [isMaximized, setIsMaximized] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // 滚动容器与自动吸底状态机
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isAutoScrollRef = useRef(true);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // 用户滚动意图检测：距离底部 <= 40px 视作在底部，恢复自动跟随；否则判定为用户手动翻阅历史
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
+    isAutoScrollRef.current = atBottom;
+    setIsAtBottom(atBottom);
+    if (atBottom) {
+      setUnreadCount(0);
+    }
+  }, []);
+
+  // 监听新日志到达：跟随状态下平滑滚动到底部，翻阅状态下不打扰用户并记录未读条数
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    if (isAutoScrollRef.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    } else {
+      setUnreadCount((prev) => prev + 1);
+    }
+  }, [logs]);
+
+  // 窗口打开或切换尺寸时自动复位到底部
+  useEffect(() => {
+    if (visible && !isMinimized) {
+      const timer = setTimeout(() => {
+        const el = scrollContainerRef.current;
+        if (el) {
+          el.scrollTop = el.scrollHeight;
+          isAutoScrollRef.current = true;
+          setIsAtBottom(true);
+          setUnreadCount(0);
+        }
+      }, 60);
+      return () => clearTimeout(timer);
+    }
+  }, [visible, isMinimized, isMaximized]);
+
+  // 点击快捷回到底部
+  const handleScrollToBottom = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    isAutoScrollRef.current = true;
+    setIsAtBottom(true);
+    setUnreadCount(0);
+  };
 
   if (!visible) return null;
 
@@ -172,40 +229,63 @@ export const LogDrawer: React.FC<LogDrawerProps> = (props) => {
 
       {/* 终端内容输出流 */}
       {!isMinimized && (
-        <div className="flex-1 overflow-y-auto pt-2.5 font-mono text-xs space-y-1.5 text-zinc-300 select-text scrollbar-thin scrollbar-thumb-zinc-800">
-          {logs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-zinc-600">
-              <Terminal className="h-8 w-8 mb-2 opacity-40 animate-pulse" />
-              <p>[SYS] 暂无正在运行的抓取进程。点击上方「立即抓取热点」即可启动实时采集。</p>
-            </div>
-          ) : (
-            logs.map((log) => {
-              const isSuccess = log.type === 'success';
-              const isWarn = log.type === 'warning';
-              const isErr = log.type === 'error';
+        <div className="relative flex-1 overflow-hidden">
+          <div
+            ref={scrollContainerRef}
+            onScroll={handleScroll}
+            className="h-full overflow-y-auto pt-2.5 pb-6 font-mono text-xs space-y-1.5 text-zinc-300 select-text scrollbar-thin scrollbar-thumb-zinc-800"
+          >
+            {logs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center text-zinc-600">
+                <Terminal className="h-8 w-8 mb-2 opacity-40 animate-pulse" />
+                <p>[SYS] 暂无正在运行的抓取进程。点击上方「立即抓取热点」即可启动实时采集。</p>
+              </div>
+            ) : (
+              logs.map((log) => {
+                const isSuccess = log.type === 'success';
+                const isWarn = log.type === 'warning';
+                const isErr = log.type === 'error';
 
-              return (
-                <div
-                  key={log.id}
-                  className="flex items-start space-x-2 leading-relaxed hover:bg-zinc-900/60 rounded px-1 -mx-1"
-                >
-                  <span className="text-zinc-500 shrink-0 select-none">[{log.timestamp}]</span>
-                  <span
-                    className={`break-all ${
-                      isSuccess
-                        ? 'text-emerald-400 font-semibold'
-                        : isWarn
-                        ? 'text-yellow-400'
-                        : isErr
-                        ? 'text-rose-400 font-semibold'
-                        : 'text-zinc-300'
-                    }`}
+                return (
+                  <div
+                    key={log.id}
+                    className="flex items-start space-x-2 leading-relaxed hover:bg-zinc-900/60 rounded px-1 -mx-1"
                   >
-                    {log.message}
-                  </span>
-                </div>
-              );
-            })
+                    <span className="text-zinc-500 shrink-0 select-none">[{log.timestamp}]</span>
+                    <span
+                      className={`break-all ${
+                        isSuccess
+                          ? 'text-emerald-400 font-semibold'
+                          : isWarn
+                          ? 'text-yellow-400'
+                          : isErr
+                          ? 'text-rose-400 font-semibold'
+                          : 'text-zinc-300'
+                      }`}
+                    >
+                      {log.message}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* 用户手动向上翻阅时，右下角浮现快捷回到底部胶囊按钮 */}
+          {!isAtBottom && logs.length > 0 && (
+            <button
+              type="button"
+              onClick={handleScrollToBottom}
+              className="absolute bottom-3 right-5 z-20 flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900/95 px-3 py-1 text-[11px] font-medium text-zinc-200 shadow-2xl backdrop-blur-md transition-all hover:bg-zinc-800 hover:text-white hover:border-zinc-600 active:scale-95 animate-in fade-in slide-in-from-bottom-2"
+            >
+              <ArrowDown className="h-3.5 w-3.5 text-amber-400 animate-bounce" />
+              <span>滚到底部</span>
+              {unreadCount > 0 && (
+                <span className="ml-0.5 rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-mono font-semibold text-amber-300">
+                  +{unreadCount}
+                </span>
+              )}
+            </button>
           )}
         </div>
       )}

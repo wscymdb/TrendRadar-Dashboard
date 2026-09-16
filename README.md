@@ -85,6 +85,9 @@
 
 | 请求方法 | 接口路径              | 说明                                                                                 |
 | :------- | :-------------------- | :----------------------------------------------------------------------------------- |
+| `POST`   | `/api/auth/login`     | 验证管理密码并签发安全认证 Token（基于不可逆加盐 SHA-256）                           |
+| `GET`    | `/api/auth/status`    | 获取系统是否启用了密码保护及当前客户端凭据的有效性                                   |
+| `POST`   | `/api/auth/logout`    | 安全注销退出管理会话                                                                 |
 | `GET`    | `/api/status`         | 获取系统运行状态、版本、时区、启用的平台与 RSS 统计                                  |
 | `GET`    | `/api/news`           | 查询实时热搜与历史数据（支持 `scope=current/history`, `platform`, `search`, `date`） |
 | `GET`    | `/api/dates`          | 获取 SQLite 数据库中所有已归档的历史日期列表                                         |
@@ -147,6 +150,33 @@ python docker/server.py
    - 远程自动使用独立的 `docker/Dockerfile.dashboard` 构建镜像并启动容器；
 4. 部署成功后，直接在浏览器访问：
    👉 **`http://<您的服务器IP或域名>:7773/`**
+
+---
+
+## 🔐 控制台访问密码配置 (重要)
+
+为防止控制台与敏感监控配置直接暴露在公网，系统支持**全站统一强制登录保护**（基于不可逆 SHA-256 签名鉴权）：
+
+### 1. 配置位置
+- **配置文件路径**：`docker/.env`（参考 [docker/.env.example](docker/.env.example)）
+- **配置字段**：`ADMIN_PASSWORD`
+
+### 2. 设置与生效步骤
+1. 打开服务器上的 `docker/.env` 文件（或本地开发环境下的 `docker/.env`）；
+2. 添加或修改管理员密码（建议使用 8 位以上复杂密码）：
+   ```env
+   ADMIN_PASSWORD=your_secure_password
+   ```
+3. 保存后重启容器即可生效：
+   ```bash
+   # 在服务器部署目录的 docker/ 下重启
+   docker compose -f docker-compose.dashboard.yml restart
+   ```
+4. **安全保护效果**：
+   - 任何访客打开网站任意页面（包括首页大屏 `/` 和管理控制台 `/admin`），均会被拦截并重定向至极简科技感登录页 `/login`；
+   - 验证通过后凭据（不可逆 Hash Token）安全缓存在客户端，一次解锁长期免输；
+   - 顶栏配备「安全退出」按钮，点击随时主动注销并全站重新锁定；
+   - 若 `ADMIN_PASSWORD` 留空，系统将作为本地开发免密模式运行。
 
 ---
 

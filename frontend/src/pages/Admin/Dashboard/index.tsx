@@ -51,7 +51,7 @@ const formatCronPeriod = (cron: string): string => {
 };
 
 const DashboardPage: React.FC = () => {
-  const { newsList, isCrawling, crawlProgress, logs, lastCrawlTime, triggerCrawl, fetchLatestNews, pollLogs } = useNewsStore();
+  const { newsList, isCrawling, crawlProgress, logs, lastCrawlTime, triggerCrawl, fetchLatestNews, pollLogs, clearLogs } = useNewsStore();
   const { platforms, rssFeeds, syncFromBackend: syncFeeds } = useFeedsStore();
   const { keywordGroups, syncFromBackend: syncKeywords } = useKeywordsStore();
   const { runMode, cronSchedule, syncFromBackend: syncConfig, saveRunModeOnly } = useConfigStore();
@@ -72,6 +72,7 @@ const DashboardPage: React.FC = () => {
   const currentMode = runMode || 'current';
 
   const handleStartCrawl = () => {
+    clearLogs();
     setShowLogs(true);
     triggerCrawl();
   };
@@ -359,7 +360,7 @@ const DashboardPage: React.FC = () => {
           visible={true}
           onClose={() => setShowLogs(false)}
           logs={logs}
-          onClearLogs={() => useNewsStore.setState({ logs: [] })}
+          onClearLogs={clearLogs}
         />
       )}
     </div>
