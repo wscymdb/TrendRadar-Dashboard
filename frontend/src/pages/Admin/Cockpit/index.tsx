@@ -75,10 +75,10 @@ const CockpitPage: React.FC = () => {
   return (
     <div
       ref={containerRef}
-      className={`min-h-screen transition-colors duration-300 ${
+      className={`min-h-screen space-y-6 transition-colors duration-300 ${
         isFullscreen
-          ? 'p-6 bg-zinc-100 text-zinc-900 dark:bg-black dark:text-zinc-100 overflow-y-auto'
-          : 'space-y-6'
+          ? 'p-6 lg:p-8 bg-zinc-100 text-zinc-900 dark:bg-black dark:text-zinc-100 overflow-y-auto'
+          : ''
       }`}
     >
       {/* 操作结果提示 Toast */}

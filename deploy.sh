@@ -7,19 +7,36 @@
 
 set -e
 
-# 配置远程服务器信息（可根据环境变量覆盖）
-SERVER_HOST="${SERVER_HOST:-puta99.fun}"
-SERVER_USER="${SERVER_USER:-root}"
-REMOTE_DIR="${REMOTE_DIR:-/root/trendradar-dashboard}"
+# 配置远程服务器信息（优先读取环境变量，避免代码库暴露真实服务器域名）
+if [ -f "docker/.env" ]; then
+    eval "$(grep -E '^(DEPLOY_SERVER_HOST|DEPLOY_SERVER_USER|DEPLOY_REMOTE_DIR)=' docker/.env 2>/dev/null || true)"
+fi
+
+SERVER_HOST="${SERVER_HOST:-${DEPLOY_SERVER_HOST:-}}"
+SERVER_USER="${SERVER_USER:-${DEPLOY_SERVER_USER:-root}}"
+REMOTE_DIR="${REMOTE_DIR:-${DEPLOY_REMOTE_DIR:-/root/trendradar-dashboard}}"
 
 # 脚本所在根目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
+# 若未设置目标主机，支持交互式输入
+if [ -z "${SERVER_HOST}" ]; then
+    echo "💡 请输入目标服务器 IP 或域名 (例如: 1.2.3.4 或 example.com):"
+    read -r -p "SERVER_HOST: " INPUT_HOST
+    SERVER_HOST="${INPUT_HOST}"
+fi
+
+if [ -z "${SERVER_HOST}" ]; then
+    echo "❌ 错误: 未指定目标服务器地址，退出发布流程！"
+    exit 1
+fi
+
 echo "=================================================="
 echo "🚀 开始执行 TrendRadar-Dashboard 一键发布流程"
 echo "🌐 目标服务器: ${SERVER_USER}@${SERVER_HOST}:${REMOTE_DIR}"
 echo "=================================================="
+echo ""
 echo ""
 
 # 1. 本地前端自动化编译打包
